@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>মেস খাতা — Meal Manager</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="toast-root"></div>
+
+<!-- ══ SETUP SCREEN ══ -->
+<div class="screen" id="setup-screen" style="display:none">
+  <div class="screen-card">
+    <div class="screen-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18a9 9 0 0 1-18 0z"/><path d="M7 12c0-2 .8-4 .8-6M12 12c0-3 .3-5 .3-7M17 12c0-2-.8-4-.8-6"/></svg></div>
+    <h1>মেস খাতা-য় স্বাগতম</h1>
+    <p class="sub">নতুন এই খাতা শুরু করার আগে মেসের নাম আর একটা Manager PIN সেট করুন — এই PIN দিয়েই সব এডিট করতে পারবেন।</p>
+    <div class="fg"><label>মেসের নাম</label><input type="text" id="su-name" placeholder="যেমনঃ Green Valley Mess"></div>
+    <div class="fg"><label>Manager PIN (৪-৬ সংখ্যা)</label><input type="password" id="su-pin" inputmode="numeric" maxlength="6" placeholder="••••"></div>
+    <div id="su-err" class="err-box"></div>
+    <button class="btn primary block" id="su-btn" onclick="doSetup()">খাতা তৈরি করুন</button>
+  </div>
+</div>
+
+<!-- ══ LOGIN SCREEN (normal form — not a numpad) ══ -->
+<div class="screen" id="login-screen" style="display:none">
+  <div class="screen-card">
+    <div class="screen-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18a9 9 0 0 1-18 0z"/><path d="M7 12c0-2 .8-4 .8-6M12 12c0-3 .3-5 .3-7M17 12c0-2-.8-4-.8-6"/></svg></div>
+    <h1 id="login-title">মেস খাতা</h1>
+    <p class="sub" id="login-sub">লগিন করতে আপনার PIN দিন।</p>
+    <div class="fg">
+      <label>PIN</label>
+      <div style="position:relative">
+        <input type="password" id="login-pin" inputmode="numeric" maxlength="6" placeholder="PIN দিন" onkeydown="if(event.key==='Enter')doLogin()" style="padding-right:44px">
+        <button type="button" class="btn icon ghost sm" onclick="togglePinVisibility()" style="position:absolute;right:4px;top:4px" id="pin-eye" title="দেখুন/লুকান"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      </div>
+    </div>
+    <div id="login-err" class="err-box"></div>
+    <button class="btn primary block" id="login-btn" onclick="doLogin()">লগিন করুন</button>
+    <p class="hint" style="margin-top:14px;text-align:center">Manager PIN দিলে সব এডিট করতে পারবেন। Member PIN দিলে শুধু দেখতে পারবেন।</p>
+  </div>
+</div>
+
+<!-- ══ APP SHELL ══ -->
+<div id="app" style="display:none">
+  <div class="drawer-bd" id="drawerBd" onclick="closeDrawer()"></div>
+  <aside class="sidebar" id="sidebar">
+    <div class="sb-brand">
+      <div class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18a9 9 0 0 1-18 0z"/><path d="M7 12c0-2 .8-4 .8-6M12 12c0-3 .3-5 .3-7M17 12c0-2-.8-4-.8-6"/></svg></div>
+      <div class="tx"><b>মেস খাতা</b><span id="sb-messname">My Mess</span></div>
+    </div>
+    <nav class="sb-nav">
+      <div class="sb-sec">Overview</div>
+      <button class="sb-item on" data-page="dashboard" onclick="goTo('dashboard')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5.5 10v10.2h13V10"/><path d="M9.5 20.2v-6h5v6"/></svg>Dashboard</button>
+      <div class="sb-sec">Mess</div>
+      <button class="sb-item" data-page="members" onclick="goTo('members')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20c0-3.5 3-6 6.5-6s6.5 2.5 6.5 6"/><circle cx="17.3" cy="9" r="2.6"/><path d="M15.4 14.3c2.7.4 4.6 2.6 4.6 5.9"/></svg>Members</button>
+      <button class="sb-item" data-page="meals" onclick="goTo('meals')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v7.5M4 2v4.2a2 2 0 0 0 4 0V2M6 13.5V22"/><path d="M18 2c-2.2 1-3.4 3.2-3.4 6.3 0 2.6 1.4 3.2 3.4 3.2V22"/></svg>Daily Meal Entry</button>
+      <button class="sb-item" data-page="bazar" onclick="goTo('bazar')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20.2" r="1.3"/><circle cx="17.5" cy="20.2" r="1.3"/><path d="M2 3.2h2.2l2.3 12a2 2 0 0 0 2 1.6h8.4a2 2 0 0 0 2-1.6l1.6-8.7H5.8"/></svg>Bazar Expense</button>
+      <button class="sb-item" data-page="other" onclick="goTo('other')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 3h13v18l-2-1.3-2 1.3-2-1.3-2 1.3-2-1.3-2 1.3z"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4"/></svg>Other Expenses</button>
+      <button class="sb-item" data-page="deposits" onclick="goTo('deposits')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2.2"/><circle cx="12" cy="12" r="2.8"/><path d="M6 9v0M18 15v0"/></svg>Deposits</button>
+      <button class="sb-item" data-page="summary" onclick="goTo('summary')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V4"/><path d="M4 21h17" stroke-width="1.8"/><rect x="6.5" y="12" width="3.2" height="9" fill="currentColor" stroke="none"/><rect x="12.4" y="7" width="3.2" height="14" fill="currentColor" stroke="none"/><rect x="18.3" y="10.5" width="3.2" height="10.5" fill="currentColor" stroke="none"/></svg>Monthly Summary</button>
+      <div class="sb-sec">System</div>
+      <button class="sb-item" data-page="settings" onclick="goTo('settings')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2.1" fill="var(--surface)"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2.1" fill="var(--surface)"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="7.5" cy="18" r="2.1" fill="var(--surface)"/></svg>Settings</button>
+    </nav>
+    <div class="sb-foot">
+      <button class="btn ghost block" onclick="toggleTheme()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.3A8.4 8.4 0 1 1 9.7 4a6.8 6.8 0 0 0 10.3 10.3z"/></svg><span id="theme-lab">Dark Mode</span></button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="tb-l">
+        <button class="btn icon ghost" id="hamb" onclick="openDrawer()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="3.5" y1="6.5" x2="20.5" y2="6.5"/><line x1="3.5" y1="12" x2="20.5" y2="12"/><line x1="3.5" y1="17.5" x2="20.5" y2="17.5"/></svg></button>
+        <h2 id="page-title">Dashboard</h2>
+      </div>
+      <div class="tb-r">
+        <button class="btn icon ghost" onclick="renderPage(curPage);toast('রিফ্রেশ হয়েছে','ok')" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3.1-6.8"/><path d="M21 3.3V10h-6.7"/></svg></button>
+        <button class="btn primary" id="add-btn" style="display:none" onclick="doAdd()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span id="add-tx">Add</span></button>
+      </div>
+    </header>
+
+    <div class="content" id="content">
+
+      <!-- ══ DASHBOARD ══ -->
+      <section class="page on" data-page="dashboard">
+        <div class="grid cols-4" id="dash-stats" style="margin-bottom:16px"></div>
+        <div class="two-col">
+          <div class="card">
+            <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V4"/><path d="M4 21h17" stroke-width="1.8"/><rect x="6.5" y="12" width="3.2" height="9" fill="currentColor" stroke="none"/><rect x="12.4" y="7" width="3.2" height="14" fill="currentColor" stroke="none"/><rect x="18.3" y="10.5" width="3.2" height="10.5" fill="currentColor" stroke="none"/></svg>বাজার খরচ ট্রেন্ড (৬ মাস)</h3></div>
+            <div class="chart-bars" id="dash-chart"></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2.3 20.5h19.4z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17.4" r=".7" fill="currentColor" stroke="none"/></svg>Due তালিকা (এই মাস)</h3></div>
+            <div id="dash-dues"></div>
+          </div>
+        </div>
+        <div class="two-col" style="margin-top:14px">
+          <div class="card">
+            <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v7.5M4 2v4.2a2 2 0 0 0 4 0V2M6 13.5V22"/><path d="M18 2c-2.2 1-3.4 3.2-3.4 6.3 0 2.6 1.4 3.2 3.4 3.2V22"/></svg>সাম্প্রতিক Meal Entry</h3></div>
+            <div class="tblwrap"><table class="rtbl"><tbody id="dash-recent-meals"></tbody></table></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20.2" r="1.3"/><circle cx="17.5" cy="20.2" r="1.3"/><path d="M2 3.2h2.2l2.3 12a2 2 0 0 0 2 1.6h8.4a2 2 0 0 0 2-1.6l1.6-8.7H5.8"/></svg>সাম্প্রতিক Bazar</h3></div>
+            <div class="tblwrap"><table class="rtbl"><tbody id="dash-recent-bazar"></tbody></table></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══ MEMBERS ══ -->
+      <section class="page" data-page="members">
+        <div class="fbar">
+          <div class="srch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.4" y2="16.4"/></svg><input type="text" placeholder="নাম/ফোন/ID খুঁজুন..." oninput="memSearch(this.value)"></div>
+          <div class="pillbar" id="mem-pills">
+            <button class="pill on" data-s="All" onclick="filterMemStatus('All')">সবাই</button>
+            <button class="pill" data-s="Active" onclick="filterMemStatus('Active')">Active</button>
+            <button class="pill" data-s="Inactive" onclick="filterMemStatus('Inactive')">Inactive</button>
+            <button class="pill" data-s="Left" onclick="filterMemStatus('Left')">Left</button>
+          </div>
+        </div>
+        <div class="card pad-0"><div class="tblwrap"><table class="rtbl">
+          <thead><tr><th>Member</th><th>Phone</th><th>Status</th><th>Joined</th><th>Notes</th><th></th></tr></thead>
+          <tbody id="mem-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- ══ DAILY MEAL ENTRY ══ -->
+      <section class="page" data-page="meals">
+        <div class="two-col" style="align-items:start">
+          <div class="card">
+            <div class="card-h">
+              <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2.2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2.5" x2="8" y2="6.5"/><line x1="16" y1="2.5" x2="16" y2="6.5"/></svg><span id="meal-date-lab">আজ</span></h3>
+              <div style="display:flex;gap:6px">
+                <button class="btn sm icon ghost" onclick="shiftMealDate(-1)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+                <button class="btn sm" onclick="setMealDate(todayISO())">আজ</button>
+                <button class="btn sm icon ghost" onclick="shiftMealDate(1)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+              </div>
+            </div>
+            <input type="date" id="me-date" onchange="loadMealGrid()" style="margin-bottom:14px">
+            <div style="display:flex;gap:8px;margin-bottom:12px" id="meal-quickfill">
+              <button class="btn sm" onclick="quickFillMeals(2)">সবাইকে ২ Meal দিন</button>
+              <button class="btn sm" onclick="quickFillMeals(0)">সবাইকে Off দিন</button>
+            </div>
+            <div id="meal-grid"></div>
+            <button class="btn primary block" id="save-meal-grid" onclick="saveMealGrid()" style="margin-top:6px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>সবার এন্ট্রি Save করুন</button>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2.2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2.5" x2="8" y2="6.5"/><line x1="16" y1="2.5" x2="16" y2="6.5"/></svg>মাসের Heatmap</h3></div>
+            <div class="heatmap" id="meal-heatmap"></div>
+            <p class="hint" style="margin-top:10px">যেকোনো দিনে ক্লিক করলে সেই দিনের এন্ট্রিতে চলে যাবেন। গাঢ় রঙ মানে বেশি মিল হয়েছে।</p>
+          </div>
+        </div>
+        <hr class="rule">
+        <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8.2"/><path d="M12 8.7V13l3 2"/><path d="M9 2.3h6"/></svg>সাম্প্রতিক এন্ট্রি</h3></div>
+        <div class="card pad-0"><div class="tblwrap"><table class="rtbl">
+          <thead><tr><th>Date</th><th>Member</th><th>Meals</th><th>Guest</th><th>Total</th><th>Notes</th><th></th></tr></thead>
+          <tbody id="meal-recent-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- ══ BAZAR EXPENSE ══ -->
+      <section class="page" data-page="bazar">
+        <div class="fbar">
+          <label>Month:</label>
+          <select id="bz-mon-f" onchange="renderBazar()"><option value="">সব</option></select>
+          <input type="number" id="bz-yr-f" placeholder="Year" style="width:90px" onchange="renderBazar()">
+        </div>
+        <div class="grid cols-2" id="bz-cards" style="margin-bottom:14px"></div>
+        <div class="card pad-0"><div class="tblwrap"><table class="rtbl">
+          <thead><tr><th>Date</th><th>Bought By</th><th>Amount</th><th>Notes</th><th></th></tr></thead>
+          <tbody id="bz-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- ══ OTHER EXPENSES ══ -->
+      <section class="page" data-page="other">
+        <div class="ibox info" style="margin-bottom:14px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="10.6" x2="12" y2="16.2"/><circle cx="12" cy="7.5" r=".7" fill="currentColor" stroke="none"/></svg><div>Bazar ছাড়া অন্য যেকোনো খরচ (গ্যাস, সিলিন্ডার, পরিষ্কার-কর্মী, ওয়াইফাই...) এখানে যোগ করুন — মাস শেষে এটা সব Active member-এর মধ্যে সমান ভাগ হয়ে Monthly Summary-তে যোগ হবে।</div></div>
+        <div class="fbar">
+          <label>Month:</label>
+          <select id="ot-mon-f" onchange="renderOther()"><option value="">সব</option></select>
+          <input type="number" id="ot-yr-f" placeholder="Year" style="width:90px" onchange="renderOther()">
+        </div>
+        <div class="grid cols-2" id="ot-cards" style="margin-bottom:14px"></div>
+        <div class="card pad-0"><div class="tblwrap"><table class="rtbl">
+          <thead><tr><th>Date</th><th>Title</th><th>Amount</th><th>Notes</th><th></th></tr></thead>
+          <tbody id="ot-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- ══ DEPOSITS ══ -->
+      <section class="page" data-page="deposits">
+        <div class="fbar">
+          <label>Month:</label>
+          <select id="dep-mon-f" onchange="renderDeposits()"><option value="">সব</option></select>
+          <input type="number" id="dep-yr-f" placeholder="Year" style="width:90px" onchange="renderDeposits()">
+        </div>
+        <div class="grid cols-2" id="dep-cards" style="margin-bottom:14px"></div>
+        <div class="card pad-0"><div class="tblwrap"><table class="rtbl">
+          <thead><tr><th>Date</th><th>Member</th><th>Amount</th><th>Method</th><th>Notes</th><th></th></tr></thead>
+          <tbody id="dep-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- ══ MONTHLY SUMMARY ══ -->
+      <section class="page" data-page="summary">
+        <div class="fbar">
+          <label>Month:</label>
+          <select id="sm-mon" onchange="renderSummary()"></select>
+          <label>Year:</label>
+          <input type="number" id="sm-yr" style="width:90px" onchange="renderSummary()">
+          <button class="btn sm" style="margin-left:auto" onclick="exportSummaryCSV()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12.5"/><polyline points="7 11 12 16 17 11"/><path d="M4 20h16"/></svg>CSV Export</button>
+        </div>
+        <div class="grid cols-3" id="sm-cards" style="margin-bottom:14px"></div>
+        <div class="ibox warn" id="sm-manager" style="margin-bottom:14px;align-items:center"></div>
+        <div class="ibox info" style="margin-bottom:14px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="10.6" x2="12" y2="16.2"/><circle cx="12" cy="7.5" r=".7" fill="currentColor" stroke="none"/></svg><div>Meal Cost = Rate × (নিজের + Guest Meals)। Other Expense Share = মোট Other Expense ÷ Active Member সংখ্যা। Balance = Deposits − Meal Cost − Other Share।</div></div>
+        <div class="card pad-0"><div class="tblwrap"><table class="rtbl">
+          <thead><tr><th>Member</th><th>Meals</th><th>Meal Cost</th><th>Other Share</th><th>Deposits</th><th>Balance</th><th>Status</th></tr></thead>
+          <tbody id="sm-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- ══ SETTINGS ══ -->
+      <section class="page" data-page="settings">
+        <div class="grid cols-2">
+          <div class="card">
+            <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5 4 4h16l1 5.5"/><path d="M3 9.5a2.6 2.6 0 0 0 5.2 0 2.6 2.6 0 0 0 5.2 0 2.6 2.6 0 0 0 5.2 0 2.6 2.6 0 0 0 4.4 1.9"/><path d="M5 10v10.2h14V10"/></svg>Mess Info</h3></div>
+            <div class="fg"><label>Mess Name</label><input type="text" id="set-messname"></div>
+            <button class="btn primary" onclick="saveMessInfo()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>Save</button>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2.2"/><path d="M7 11V8a5 5 0 0 1 10 0v3"/></svg>Access PINs</h3></div>
+            <p class="hint" style="margin-bottom:12px">Manager PIN দিয়ে লগিন করলে সব এডিট করা যায়। Member PIN (চাইলে সেট করুন) দিয়ে লগিন করলে শুধু দেখা যায় — কিছু বদলানো যায় না।</p>
+            <div class="fg"><label>Manager PIN বদলান</label><input type="password" id="set-admin-pin" maxlength="6" inputmode="numeric" placeholder="নতুন ৪-৬ সংখ্যা"></div>
+            <div class="fg"><label>Member (View-Only) PIN</label><input type="password" id="set-viewer-pin" maxlength="6" inputmode="numeric" placeholder="খালি রাখলে বন্ধ থাকবে"></div>
+            <button class="btn primary" onclick="savePins()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>PIN Save করুন</button>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l4 3 5-6.5 5 6.5 4-3-2.1 11.5H5.1z"/></svg>Manager Roster</h3></div>
+            <p class="hint" style="margin-bottom:10px">সব মাসের Manager অ্যাসাইনমেন্ট এখানে দেখা যাবে। বদলাতে Monthly Summary পেজে যান।</p>
+            <div id="set-managers-list" style="max-height:180px;overflow-y:auto"></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M6 7l1 13.2a2 2 0 0 0 2 1.8h6a2 2 0 0 0 2-1.8L18 7"/><path d="M9.5 7V4.3h5V7"/></svg>Danger Zone</h3></div>
+            <p class="hint" style="margin-bottom:12px">এতে সব Member, Meal, Bazar, Deposit ডেটা চিরতরে মুছে যাবে। এই কাজ Undo করা যায় না।</p>
+            <button class="btn sm danger" onclick="resetAllData()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M6 7l1 13.2a2 2 0 0 0 2 1.8h6a2 2 0 0 0 2-1.8L18 7"/><path d="M9.5 7V4.3h5V7"/></svg>সব ডেটা মুছে ফেলুন</button>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<!-- ══ MODALS ══ -->
+<div class="overlay" id="ov-member">
+  <div class="modal">
+    <div class="m-head"><h3 id="mem-modal-title">Add Member</h3><button class="btn icon ghost" onclick="closeM('ov-member')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
+    <div class="m-body">
+      <div class="fg"><label>নাম *</label><input type="text" id="mm-name"></div>
+      <div class="fr2">
+        <div class="fg"><label>ফোন</label><input type="tel" id="mm-phone"></div>
+        <div class="fg"><label>Status</label><select id="mm-status"><option>Active</option><option>Inactive</option><option>Left</option></select></div>
+      </div>
+      <div class="fg"><label>Joined Date</label><input type="date" id="mm-joined"></div>
+      <div class="fg"><label>Notes</label><input type="text" id="mm-notes" placeholder="Optional"></div>
+    </div>
+    <div class="m-foot"><button class="btn" onclick="closeM('ov-member')">বাতিল</button><button class="btn primary" id="save-mem" onclick="saveMember()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>Save</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="ov-bazar">
+  <div class="modal">
+    <div class="m-head"><h3>Add Bazar Expense</h3><button class="btn icon ghost" onclick="closeM('ov-bazar')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
+    <div class="m-body">
+      <div class="fr2"><div class="fg"><label>Date</label><input type="date" id="bzd"></div><div class="fg"><label>Bought By</label><input type="text" id="bzby"></div></div>
+      <div class="fg"><label>Amount *</label><input type="number" id="bzamt" placeholder="500"></div>
+      <div class="fg"><label>Notes</label><input type="text" id="bznote" placeholder="Optional"></div>
+    </div>
+    <div class="m-foot"><button class="btn" onclick="closeM('ov-bazar')">বাতিল</button><button class="btn primary" id="save-bz" onclick="saveBazar()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>Save</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="ov-other">
+  <div class="modal">
+    <div class="m-head"><h3>Add Other Expense</h3><button class="btn icon ghost" onclick="closeM('ov-other')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
+    <div class="m-body">
+      <div class="fr2"><div class="fg"><label>Date</label><input type="date" id="otd"></div><div class="fg"><label>Title *</label><input type="text" id="ottitle" placeholder="যেমনঃ Gas Bill"></div></div>
+      <div class="fg"><label>Amount *</label><input type="number" id="otamt" placeholder="300"></div>
+      <div class="fg"><label>Notes</label><input type="text" id="otnote" placeholder="Optional"></div>
+    </div>
+    <div class="m-foot"><button class="btn" onclick="closeM('ov-other')">বাতিল</button><button class="btn primary" id="save-ot" onclick="saveOther()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>Save</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="ov-deposit">
+  <div class="modal">
+    <div class="m-head"><h3>Add Deposit</h3><button class="btn icon ghost" onclick="closeM('ov-deposit')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
+    <div class="m-body">
+      <div class="fr2"><div class="fg"><label>Member *</label><select id="dep-member"></select></div><div class="fg"><label>Date</label><input type="date" id="depd"></div></div>
+      <div class="fr2"><div class="fg"><label>Amount *</label><input type="number" id="depamt" placeholder="1000"></div><div class="fg"><label>Method</label><select id="depmeth"><option>Cash</option><option>bKash</option><option>Nagad</option><option>Rocket</option><option>Bank</option></select></div></div>
+      <div class="fg"><label>Notes</label><input type="text" id="depnote" placeholder="Optional"></div>
+    </div>
+    <div class="m-foot"><button class="btn" onclick="closeM('ov-deposit')">বাতিল</button><button class="btn primary" id="save-dep" onclick="saveDeposit()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>Save</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="ov-manager">
+  <div class="modal">
+    <div class="m-head"><h3>Assign Monthly Manager</h3><button class="btn icon ghost" onclick="closeM('ov-manager')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
+    <div class="m-body">
+      <p class="hint" style="margin-bottom:12px">প্রতি মাসে একজন সদস্য বাজার-খরচ সামলানোর দায়িত্বে থাকবে।</p>
+      <div class="fr2"><div class="fg"><label>Month</label><input type="text" id="mgr-mon" readonly></div><div class="fg"><label>Year</label><input type="text" id="mgr-yr" readonly></div></div>
+      <div class="fg"><label>Member *</label><select id="mgr-member"></select></div>
+    </div>
+    <div class="m-foot"><button class="btn" onclick="closeM('ov-manager')">বাতিল</button><button class="btn primary" id="save-mgr" onclick="saveManager()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>Save</button></div>
+  </div>
+</div>
+
+<!-- Member ledger side-sheet -->
+<div class="overlay" id="ov-ledger" style="justify-content:flex-end;align-items:stretch;background:rgba(15,20,17,.4)">
+  <div class="sheet on" style="position:relative;box-shadow:none">
+    <div class="m-head"><h3 id="led-title">Member Ledger</h3><button class="btn icon ghost" onclick="closeM('ov-ledger')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
+    <div class="m-body" style="flex:1">
+      <div class="grid cols-2" id="led-stats" style="margin-bottom:16px"></div>
+      <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v7.5M4 2v4.2a2 2 0 0 0 4 0V2M6 13.5V22"/><path d="M18 2c-2.2 1-3.4 3.2-3.4 6.3 0 2.6 1.4 3.2 3.4 3.2V22"/></svg>সাম্প্রতিক Meal</h3></div>
+      <div id="led-meals" style="margin-bottom:16px"></div>
+      <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2.2"/><circle cx="12" cy="12" r="2.8"/><path d="M6 9v0M18 15v0"/></svg>সাম্প্রতিক Deposit</h3></div>
+      <div id="led-deposits"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
