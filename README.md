@@ -50,7 +50,7 @@ const SUPABASE_ANON_KEY = 'YOUR-ANON-PUBLIC-KEY';
 ```bash
 git init
 git add .
-git commit -m "মেস খাতা — initial deploy"
+git commit -m "Meal Management — initial deploy"
 git branch -M main
 git remote add origin https://github.com/<আপনার-ইউজারনেম>/mess-khata.git
 git push -u origin main
