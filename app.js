@@ -120,7 +120,7 @@ async function loadState(messId){
     settings: s.data ? {
       messName:s.data.name||'', theme:s.data.theme||'light', ownerMemberId:s.data.owner_member_id||''
     } : emptySettings(),
-    members:(mem.data||[]).map(r=>({id:r.id,name:r.name,phone:r.phone||'',passwordHash:r.password_hash||'',status:r.status,joined:r.joined||'',left:r.left_date||'',inactiveFrom:r.inactive_from||'',inactiveTo:r.inactive_to||'',notes:r.notes||''})),
+    members:(mem.data||[]).map(r=>({id:r.id,name:r.name,phone:r.phone||'',passwordHash:r.password_hash||'',status:r.status,joined:r.joined||'',left:r.left_date||'',inactiveFrom:r.inactive_from||'',inactiveTo:r.inactive_to||'',inOtherFund:r.in_other_fund!==false,notes:r.notes||''})),
     mealEntries:(meals.data||[]).map(r=>({id:r.id,date:r.date,mid:r.member_id,name:r.member_name,meals:Number(r.meals),guest:Number(r.guest),notes:r.notes||''})),
     bazarExp:(bazar.data||[]).map(r=>({id:r.id,date:r.date,by:r.bought_by||'',amount:Number(r.amount),notes:r.notes||''})),
     otherExp:(other.data||[]).map(r=>({id:r.id,date:r.date,title:r.title,amount:Number(r.amount),notes:r.notes||''})),
@@ -219,7 +219,7 @@ async function doSetup(){
   setBusy('su-btn',false,'খাতা তৈরি করুন');
   if(ownerLinkOk){
     currentMessId=messId;
-    STATE={messId,settings:{messName,theme:'light',ownerMemberId:ownerId},members:[{id:ownerId,name:ownerName,phone:ownerPhone,passwordHash,status:'Active',joined:todayISO(),left:'',inactiveFrom:'',inactiveTo:'',notes:''}],mealEntries:[],bazarExp:[],otherExp:[],deposits:[],managers:[]};
+    STATE={messId,settings:{messName,theme:'light',ownerMemberId:ownerId},members:[{id:ownerId,name:ownerName,phone:ownerPhone,passwordHash,status:'Active',joined:todayISO(),left:'',inactiveFrom:'',inactiveTo:'',inOtherFund:true,notes:''}],mealEntries:[],bazarExp:[],otherExp:[],deposits:[],managers:[]};
     document.getElementById('setup-screen').style.display='none';
     currentMember=STATE.members[0]; isSuperAdmin=true; isMonthManager=false; isAdmin=true;
     applyTheme();
@@ -552,10 +552,13 @@ function memberSummary(mid,month,year){
   const status=bal<0?'Due':bal>0?'Advance':'Settled';
   return {meals:m,guest:g,mealCost,deposits:dep,balance:bal,status};
 }
-// Other-Expense fund only: equal per-active-member share vs Other-type deposits.
+// Other-Expense fund only: equal share among only the members who are IN
+// this mess's Other Fund list (in_other_fund !== false) — a separate,
+// smaller/larger list than the main meal-member roster.
+function otherFundMembers(){ return STATE.members.filter(m=>m.status!=='Left'&&m.inOtherFund!==false); }
 function otherFundSummary(mid,month,year){
-  const activeCount=STATE.members.filter(x=>x.status!=='Left').length||1;
-  const otherShare=Math.round(otherExpenseFor(month,year)/activeCount);
+  const participantCount=otherFundMembers().length||1;
+  const otherShare=Math.round(otherExpenseFor(month,year)/participantCount);
   const dep=STATE.deposits.filter(p=>p.mid===mid&&p.type==='Other'&&inMonth(p.date,month,year)).reduce((a,p)=>a+N(p.amount),0);
   const bal=dep-otherShare;
   const status=bal<0?'Due':bal>0?'Advance':'Settled';
@@ -623,7 +626,7 @@ function renderMembers(){
     <td data-label="Phone">${escapeHtml(m.phone)||'—'}</td>
     <td data-label="Status">${badge(m.status)}${isInactiveOn(m,todayISO())?` <span class="badge am" title="${fmtDate(m.inactiveFrom)} – ${fmtDate(m.inactiveTo)}">Inactive Now</span>`:m.inactiveFrom&&m.inactiveTo?` <span class="badge gy" style="font-size:10px">${fmtDate(m.inactiveFrom)}–${fmtDate(m.inactiveTo)}</span>`:''}</td>
     <td data-label="Joined">${fmtDate(m.joined)}</td>
-    <td data-label="Notes" style="color:var(--muted)">${escapeHtml(m.notes)}</td>
+    <td data-label="Notes" style="color:var(--muted)">${escapeHtml(m.notes)}${m.inOtherFund===false?' <span class="badge gy" style="font-size:10px">Other Fund-এ নেই</span>':''}</td>
     <td data-label="Actions"><div style="display:flex;gap:6px;justify-content:flex-end">
       <button class="btn icon ghost sm" onclick="openLedger('${m.id}')" title="Ledger">${ICONS.HISTORY}</button>
       ${isAdmin?`<button class="btn icon ghost sm" onclick="openMemberModal('${m.id}')" title="Edit">${ICONS.EDIT}</button>
@@ -641,12 +644,14 @@ function openMemberModal(id){
     document.getElementById('mm-name').value=m.name;document.getElementById('mm-phone').value=m.phone;
     document.getElementById('mm-status').value=m.status;document.getElementById('mm-joined').value=m.joined||todayISO();
     document.getElementById('mm-inactive-from').value=m.inactiveFrom||'';document.getElementById('mm-inactive-to').value=m.inactiveTo||'';
+    document.getElementById('mm-other-fund').checked=m.inOtherFund!==false;
     document.getElementById('mm-notes').value=m.notes;
     document.getElementById('mm-pass-hint').textContent=m.passwordHash?'পাসওয়ার্ড আগে থেকেই সেট আছে — বদলাতে চাইলে নতুনটা লিখুন, নাহলে খালি রাখুন।':'এখনো কোনো পাসওয়ার্ড সেট করা হয়নি, তাই সে এখনো লগিন করতে পারবে না।';
   } else {
     document.getElementById('mm-name').value='';document.getElementById('mm-phone').value='';
     document.getElementById('mm-status').value='Active';document.getElementById('mm-joined').value=todayISO();
     document.getElementById('mm-inactive-from').value='';document.getElementById('mm-inactive-to').value='';
+    document.getElementById('mm-other-fund').checked=true;
     document.getElementById('mm-notes').value='';
     document.getElementById('mm-pass-hint').textContent='খালি রাখলে সে এখনো লগিন করতে পারবে না, পরে বসিয়ে দিতে পারবেন।';
   }
@@ -663,6 +668,7 @@ async function saveMember(){
   const passRaw=document.getElementById('mm-password').value;
   const inactiveFrom=document.getElementById('mm-inactive-from').value||'';
   const inactiveTo=document.getElementById('mm-inactive-to').value||'';
+  const inOtherFund=document.getElementById('mm-other-fund').checked;
   if((inactiveFrom&&!inactiveTo)||(!inactiveFrom&&inactiveTo)){toast('Inactive Period-এর দুইটাই (From ও To) দিন, নাহলে দুইটাই খালি রাখুন','er');return;}
   if(inactiveFrom&&inactiveTo&&inactiveFrom>inactiveTo){toast('Inactive To তারিখ, From তারিখের পরে হতে হবে','er');return;}
   setBusy('save-mem',true);
@@ -675,19 +681,19 @@ async function saveMember(){
     if(newStatus==='Active')leftDate='';
     const joined=document.getElementById('mm-joined').value;
     const notes=document.getElementById('mm-notes').value.trim();
-    const patch={name,phone,status:newStatus,joined:joined||null,left_date:leftDate||null,inactive_from:inactiveFrom||null,inactive_to:inactiveTo||null,notes};
+    const patch={name,phone,status:newStatus,joined:joined||null,left_date:leftDate||null,inactive_from:inactiveFrom||null,inactive_to:inactiveTo||null,in_other_fund:inOtherFund,notes};
     let newHash=m.passwordHash;
     if(passRaw){ newHash=await hashPassword(passRaw); patch.password_hash=newHash; }
     ok=await dbOp(supa.from('members').update(patch).eq('id',editMemberId).eq('mess_id',currentMessId),'Member আপডেট করা যায়নি');
-    if(ok){ m.name=name;m.phone=phone;m.status=newStatus;m.joined=joined;m.left=leftDate;m.inactiveFrom=inactiveFrom;m.inactiveTo=inactiveTo;m.notes=notes;m.passwordHash=newHash; }
+    if(ok){ m.name=name;m.phone=phone;m.status=newStatus;m.joined=joined;m.left=leftDate;m.inactiveFrom=inactiveFrom;m.inactiveTo=inactiveTo;m.inOtherFund=inOtherFund;m.notes=notes;m.passwordHash=newHash; }
   } else {
     const id=genId('MB-');
     const status=document.getElementById('mm-status').value;
     const joined=document.getElementById('mm-joined').value;
     const notes=document.getElementById('mm-notes').value.trim();
     const passwordHash=passRaw?await hashPassword(passRaw):'';
-    ok=await dbOp(supa.from('members').insert({id,mess_id:currentMessId,name,phone,password_hash:passwordHash,status,joined:joined||null,inactive_from:inactiveFrom||null,inactive_to:inactiveTo||null,notes}),'Member যোগ করা যায়নি — হতে পারে এই ফোন নম্বর দিয়ে আগে থেকেই কোথাও একজন member আছে');
-    if(ok)STATE.members.push({id,name,phone,passwordHash,status,joined,left:'',inactiveFrom,inactiveTo,notes});
+    ok=await dbOp(supa.from('members').insert({id,mess_id:currentMessId,name,phone,password_hash:passwordHash,status,joined:joined||null,inactive_from:inactiveFrom||null,inactive_to:inactiveTo||null,in_other_fund:inOtherFund,notes}),'Member যোগ করা যায়নি — হতে পারে এই ফোন নম্বর দিয়ে আগে থেকেই কোথাও একজন member আছে');
+    if(ok)STATE.members.push({id,name,phone,passwordHash,status,joined,left:'',inactiveFrom,inactiveTo,inOtherFund,notes});
   }
   setBusy('save-mem',false,ICONS.CHECK+'Save');
   if(ok){ closeM('ov-member'); persist(editMemberId?'Member আপডেট হয়েছে':'Member যোগ হয়েছে'); }
@@ -706,14 +712,15 @@ function openLedger(id){
   document.getElementById('led-title').innerHTML=`<span style="display:flex;align-items:center;gap:9px">${avatar(m)}${escapeHtml(m.name)}</span>`;
   const mon=curMon(),yr=curYr();
   const s=memberSummary(id,mon,yr);
-  const os=otherFundSummary(id,mon,yr);
+  const inOF=m.inOtherFund!==false;
+  const os=inOF?otherFundSummary(id,mon,yr):null;
   const totalDep=STATE.deposits.filter(p=>p.mid===id&&(p.type||'Meal')==='Meal').reduce((a,p)=>a+N(p.amount),0);
   const totalMeals=STATE.mealEntries.filter(e=>e.mid===id).reduce((a,e)=>a+N(e.meals)+N(e.guest),0);
   document.getElementById('led-stats').innerHTML=[
     [money(s.balance<0?Math.abs(s.balance):s.balance),s.balance<0?'এই মাসের Meal Due':'এই মাসের Meal Advance', s.balance<0?'c-danger':'c-success'],
     [totalMeals.toFixed(1).replace(/\.0$/,''),'সর্বমোট Meal (all-time)','c-primary'],
     [money(totalDep),'সর্বমোট Meal Deposit (all-time)','c-success'],
-    [money(os.balance<0?Math.abs(os.balance):os.balance),os.balance<0?'Other Fund Due':'Other Fund Advance',os.balance<0?'c-danger':'c-success'],
+    inOF?[money(os.balance<0?Math.abs(os.balance):os.balance),os.balance<0?'Other Fund Due':'Other Fund Advance',os.balance<0?'c-danger':'c-success']:['—','Other Fund-এ নেই','c-accent'],
     [m.status,'বর্তমান Status','c-accent']
   ].map(([v,l,c])=>`<div class="card stat ${c}" style="padding:12px"><div class="lab">${l}</div><div class="val" style="font-size:16px">${v}</div></div>`).join('');
   const meals=[...STATE.mealEntries].filter(e=>e.mid===id).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10);
@@ -957,10 +964,10 @@ function renderOther(){
   if(mon)list=list.filter(e=>{const d=new Date(e.date+'T00:00:00');return MONTHS[d.getMonth()]===mon;});
   if(yr)list=list.filter(e=>{const d=new Date(e.date+'T00:00:00');return d.getFullYear()===yr;});
   const total=list.reduce((a,e)=>a+N(e.amount),0);
-  const activeCount=STATE.members.filter(m=>m.status!=='Left').length||1;
+  const ofMembers=otherFundMembers();
   document.getElementById('ot-cards').innerHTML=
     `<div class="card stat c-accent"><div class="ic">${ICONS.RECEIPT}</div><div class="lab">Total (filtered)</div><div class="val">${money(total)}</div></div>
-     <div class="card stat c-info"><div class="ic">${ICONS.USERS}</div><div class="lab">Per-member share (this filter)</div><div class="val">${money(Math.round(total/activeCount))}</div></div>`;
+     <div class="card stat c-info"><div class="ic">${ICONS.USERS}</div><div class="lab">Per-member share (${ofMembers.length} জন Other Fund member নিয়ে)</div><div class="val">${money(Math.round(total/(ofMembers.length||1)))}</div></div>`;
   document.getElementById('ot-body').innerHTML=[...list].sort((a,b)=>b.date.localeCompare(a.date)).map(e=>`<tr>
     <td data-label="Date">${fmtDate(e.date)}</td><td data-label="Title" style="font-weight:600">${escapeHtml(e.title)}</td>
     <td data-label="Amount" class="num" style="color:var(--accent);font-weight:700">${money(e.amount)}</td>
@@ -986,14 +993,14 @@ function renderOther(){
     const mon3=document.getElementById('sm-mon')?document.getElementById('sm-mon').value:curMon(), yr3=document.getElementById('sm-yr')?N(document.getElementById('sm-yr').value):curYr();
     const memberBody=document.getElementById('ot-member-body');
     if(memberBody){
-      memberBody.innerHTML=STATE.members.filter(m=>m.status!=='Left').map(m=>{
+      memberBody.innerHTML=ofMembers.map(m=>{
         const os=otherFundSummary(m.id,mon3,yr3);
         return `<tr><td data-label="Member" style="font-weight:600">${escapeHtml(m.name)}</td>
           <td data-label="Share" class="num">${money(os.otherShare)}</td>
           <td data-label="Deposit" class="num" style="color:var(--success)">${money(os.deposits)}</td>
           <td data-label="Balance" class="num" style="font-weight:700;color:${os.balance<0?'var(--danger)':'var(--success)'}">${money(Math.abs(os.balance))}</td>
           <td data-label="Status">${badge(os.status)}</td></tr>`;
-      }).join('')||emptyRow(5,'কোনো member নেই');
+      }).join('')||emptyRow(5,'কোনো Other Fund member নেই — Member Edit থেকে "Other Fund"-এ যোগ করুন');
     }
   }
 }
@@ -1001,6 +1008,9 @@ function openOtherDepositModal(){
   if(!requireAdmin())return;
   depModalType='Other';
   populateMemberSelects();
+  const ofMembers=otherFundMembers();
+  if(!ofMembers.length){ toast('কোনো member Other Fund-এ নেই — আগে Member Edit থেকে "Other Fund"-এ যোগ করুন','er'); return; }
+  populateDepMemberSelect(ofMembers);
   document.getElementById('dep-modal-title').textContent='Add Deposit (Other Expense Fund)';
   document.getElementById('depd').value=todayISO();document.getElementById('dep-member').value='';
   document.getElementById('depamt').value='';document.getElementById('depnote').value='';document.getElementById('depmeth').value='Cash';
@@ -1049,9 +1059,14 @@ function renderDeposits(){
     <td data-label="Method">${p.method}</td><td data-label="Notes" style="color:var(--muted)">${escapeHtml(p.notes)}</td>
     <td data-label="">${isAdmin?`<button class="btn icon ghost sm" onclick="delDeposit('${p.id}')">${ICONS.TRASH}</button>`:''}</td></tr>`).join('')||emptyRow(6,'কোনো deposit নেই');
 }
+function populateDepMemberSelect(list){
+  const el=document.getElementById('dep-member'); if(!el)return;
+  el.innerHTML='<option value="">-- Select Member --</option>'+list.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
+}
 function openDepositModal(){
   depModalType='Meal';
   populateMemberSelects();
+  populateDepMemberSelect(STATE.members.filter(m=>m.status!=='Left'));
   document.getElementById('dep-modal-title').textContent='Add Deposit (Meal Fund)';
   document.getElementById('depd').value=todayISO();document.getElementById('dep-member').value='';
   document.getElementById('depamt').value='';document.getElementById('depnote').value='';document.getElementById('depmeth').value='Cash';

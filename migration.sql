@@ -33,6 +33,7 @@ update members set mess_id = 'MS-001' where mess_id is null;
 alter table members alter column mess_id set not null;
 alter table members add column if not exists inactive_from date;
 alter table members add column if not exists inactive_to date;
+alter table members add column if not exists in_other_fund boolean not null default true;
 create unique index if not exists members_phone_unique on members(phone) where phone <> '';
 create index if not exists members_mess_idx on members(mess_id);
 
