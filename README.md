@@ -53,7 +53,7 @@ const SUPABASE_ANON_KEY = 'YOUR-ANON-PUBLIC-KEY';
 ## ধাপ ৩ — GitHub-এ পুশ করুন
 
 ```bash
-
+git init
 git add .
 git commit -m "Meal Tracker — deploy"
 git branch -M main
