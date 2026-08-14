@@ -21,12 +21,12 @@
 
 <div id="toast-root"></div>
 
-<!-- ══ SETUP SCREEN ══ -->
+<!-- ══ SETUP SCREEN (create a new Mess — usable any time, not just first run) ══ -->
 <div class="screen" id="setup-screen" style="display:none">
   <div class="screen-card">
     <div class="screen-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18a9 9 0 0 1-18 0z"/><path d="M7 12c0-2 .8-4 .8-6M12 12c0-3 .3-5 .3-7M17 12c0-2-.8-4-.8-6"/></svg></div>
-    <h1>মেস খাতা-য় স্বাগতম</h1>
-    <p class="sub">নতুন এই খাতা শুরু করার আগে মেসের নাম আর আপনার (Owner/Super Admin) অ্যাকাউন্ট বানান — এই অ্যাকাউন্ট দিয়ে সবসময় সব এডিট করতে পারবেন আর মেসের নাম বদলাতে/সেটিংস দেখতে পারবেন।</p>
+    <h1>নতুন মেস তৈরি করুন</h1>
+    <p class="sub">মেসের নাম আর আপনার (Owner) অ্যাকাউন্ট বানান — এই অ্যাকাউন্ট দিয়ে সবসময় সব এডিট করতে পারবেন আর মেসের নাম বদলাতে/সেটিংস দেখতে পারবেন। ফোন নম্বর সব মেস জুড়ে ইউনিক হতে হবে।</p>
     <div class="fg"><label>মেসের নাম</label><input type="text" id="su-name" placeholder="যেমনঃ Green Valley Mess"></div>
     <div class="fg"><label>আপনার নাম</label><input type="text" id="su-owner-name" placeholder="আপনার নাম"></div>
     <div class="fr2">
@@ -35,6 +35,7 @@
     </div>
     <div id="su-err" class="err-box"></div>
     <button class="btn primary block" id="su-btn" onclick="doSetup()">খাতা তৈরি করুন</button>
+    <button class="btn ghost block" onclick="backToLogin()" style="margin-top:8px">← লগিন স্ক্রিনে ফিরে যান</button>
   </div>
 </div>
 
@@ -55,6 +56,48 @@
     <div id="login-err" class="err-box"></div>
     <button class="btn primary block" id="login-btn" onclick="doLogin()">লগিন করুন</button>
     <p class="hint" style="margin-top:14px;text-align:center">সবাই লগিন করে সব দেখতে পারবেন। এডিট করার অ্যাক্সেস শুধু Owner আর এই মাসের assigned Manager-এর কাছে থাকবে।</p>
+    <div style="display:flex;justify-content:center;gap:16px;margin-top:16px;font-size:12.5px">
+      <a href="javascript:void(0)" onclick="openSetupScreen()" style="color:var(--primary)">নতুন মেস তৈরি করুন</a>
+      <a href="javascript:void(0)" id="sa-entry-link" onclick="openSuperAdminScreen()" style="color:var(--muted)" data-exists="0">Super Admin</a>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SUPER ADMIN LOGIN / FIRST-RUN CREATE SCREEN ══ -->
+<div class="screen" id="sa-login-screen" style="display:none">
+  <div class="screen-card">
+    <div class="screen-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6l8-4z"/></svg></div>
+    <h1 id="sa-mode-title">Super Admin লগিন</h1>
+    <p class="sub" id="sa-mode-sub">আপনার Super Admin ফোন নম্বর ও Password দিন।</p>
+    <div class="fg" id="sa-name-wrap" style="display:none"><label>নাম</label><input type="text" id="sa-name" placeholder="আপনার নাম"></div>
+    <div class="fg"><label>ফোন নম্বর</label><input type="tel" id="sa-phone" placeholder="01XXXXXXXXX"></div>
+    <div class="fg"><label>Password</label><input type="password" id="sa-pass" placeholder="Password দিন"></div>
+    <div id="sa-err" class="err-box"></div>
+    <button class="btn primary block" id="sa-btn" onclick="platformAdminLogin()">লগিন করুন</button>
+    <button class="btn ghost block" onclick="backToLogin()" style="margin-top:8px">← লগিন স্ক্রিনে ফিরে যান</button>
+  </div>
+</div>
+
+<!-- ══ SUPER ADMIN DASHBOARD (platform-wide — all messes) ══ -->
+<div id="sa-dash-screen" style="display:none;flex-direction:column;min-height:100vh;background:var(--bg)">
+  <header class="topbar" style="position:sticky;top:0">
+    <div style="display:flex;align-items:center;gap:10px;flex:1">
+      <div class="mark" style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:var(--primary);border-radius:9px;color:#fff"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6l8-4z"/></svg></div>
+      <div><b style="font-size:15px">Super Admin Dashboard</b><div style="font-size:12px;color:var(--muted)" id="sa-whoami"></div></div>
+    </div>
+    <button class="btn ghost sm" onclick="saLogout()" style="color:var(--danger)">Logout</button>
+  </header>
+  <div style="padding:20px;max-width:1100px;margin:0 auto;width:100%">
+    <div class="grid cols-3" id="sa-stats" style="margin-bottom:18px"></div>
+    <div class="card" style="padding:16px">
+      <div class="card-h" style="margin-bottom:12px"><h3>সব মেস</h3>
+        <input type="text" placeholder="মেস খুঁজুন..." oninput="saMessSearch(this.value)" style="max-width:220px;margin-left:auto">
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Mess</th><th class="num">Members</th><th class="num">Active</th><th class="num">এই মাসের Meal</th><th class="num">এই মাসের বাজার</th><th>তৈরি</th><th></th></tr></thead>
+        <tbody id="sa-mess-body"></tbody>
+      </table></div>
+    </div>
   </div>
 </div>
 
@@ -81,6 +124,8 @@
     </nav>
     <div class="sb-foot">
       <div id="sb-whoami" style="font-size:12px;color:var(--muted);margin-bottom:9px;display:flex;align-items:center;gap:8px"></div>
+      <button class="btn ghost block" id="sb-back-to-sa" onclick="backToSuperAdminDash()" style="display:none;margin-bottom:7px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>Super Admin Dashboard</button>
+      <button class="btn ghost block" id="sb-change-pass" onclick="openChangePasswordModal()" style="margin-bottom:7px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>Password পরিবর্তন করুন</button>
       <button class="btn ghost block" onclick="toggleTheme()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.3A8.4 8.4 0 1 1 9.7 4a6.8 6.8 0 0 0 10.3 10.3z"/></svg><span id="theme-lab">Dark Mode</span></button>
       <button class="btn ghost block" onclick="doLogout()" style="margin-top:7px;color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Logout</button>
     </div>
@@ -193,16 +238,33 @@
 
       <!-- ══ OTHER EXPENSES ══ -->
       <section class="page" data-page="other">
-        <div class="ibox info" style="margin-bottom:14px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="10.6" x2="12" y2="16.2"/><circle cx="12" cy="7.5" r=".7" fill="currentColor" stroke="none"/></svg><div>Bazar ছাড়া অন্য যেকোনো খরচ (গ্যাস, সিলিন্ডার, পরিষ্কার-কর্মী, ওয়াইফাই...) এখানে যোগ করুন — মাস শেষে এটা সব Active member-এর মধ্যে সমান ভাগ হয়ে Monthly Summary-তে যোগ হবে।</div></div>
+        <div class="ibox info" style="margin-bottom:14px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="10.6" x2="12" y2="16.2"/><circle cx="12" cy="7.5" r=".7" fill="currentColor" stroke="none"/></svg><div>Bazar ছাড়া অন্য যেকোনো খরচ (গ্যাস, সিলিন্ডার, পরিষ্কার-কর্মী, ওয়াইফাই...) এখানে যোগ করুন — মাস শেষে এটা সব Active member-এর মধ্যে সমান ভাগ হয়ে হিসাব হবে। এই পেজের টাকা-কালেকশন (Deposit) মিলের হিসাব থেকে সম্পূর্ণ আলাদা রাখা হয়।</div></div>
         <div class="fbar">
           <label>Month:</label>
           <select id="ot-mon-f" onchange="renderOther()"><option value="">All</option></select>
           <input type="number" id="ot-yr-f" placeholder="Year" style="width:90px" onchange="renderOther()">
         </div>
         <div class="grid cols-2" id="ot-cards" style="margin-bottom:14px"></div>
-        <div class="card pad-0"><div class="tblwrap"><table class="rtbl">
+        <div class="card pad-0" style="margin-bottom:22px"><div class="tblwrap"><table class="rtbl">
           <thead><tr><th>Date</th><th>Title</th><th>Amount</th><th>Notes</th><th></th></tr></thead>
           <tbody id="ot-body"></tbody>
+        </table></div></div>
+
+        <div class="card-h" style="margin-bottom:10px"><h3>Other Fund টাকা কালেকশন</h3>
+          <select id="ot-dep-mon-f" onchange="renderOther()" style="margin-left:auto"><option value="">সব মাস</option></select>
+          <input type="number" id="ot-dep-yr-f" placeholder="Year" style="width:90px" onchange="renderOther()">
+          <button class="btn sm primary" onclick="openOtherDepositModal()" id="ot-dep-add-btn">+ Add Deposit</button>
+        </div>
+        <div class="grid cols-2" id="ot-fund-cards" style="margin-bottom:14px"></div>
+        <div class="card pad-0" style="margin-bottom:22px"><div class="tblwrap"><table class="rtbl">
+          <thead><tr><th>Date</th><th>Member</th><th>Amount</th><th>Notes</th><th></th></tr></thead>
+          <tbody id="ot-dep-body"></tbody>
+        </table></div></div>
+
+        <div class="card-h" style="margin-bottom:10px"><h3>Member-ভিত্তিক Other Fund হিসাব (এই মাস)</h3></div>
+        <div class="card pad-0"><div class="tblwrap"><table class="rtbl">
+          <thead><tr><th>Member</th><th>Share</th><th>Deposit</th><th>Balance</th><th>Status</th></tr></thead>
+          <tbody id="ot-member-body"></tbody>
         </table></div></div>
       </section>
 
@@ -231,9 +293,9 @@
         </div>
         <div class="grid cols-3" id="sm-cards" style="margin-bottom:14px"></div>
         <div class="ibox warn" id="sm-manager" style="margin-bottom:14px;align-items:center"></div>
-        <div class="ibox info" style="margin-bottom:14px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="10.6" x2="12" y2="16.2"/><circle cx="12" cy="7.5" r=".7" fill="currentColor" stroke="none"/></svg><div>Meal Cost = Rate × (নিজের + Guest Meals)। Other Expense Share = মোট Other Expense ÷ Active Member সংখ্যা। Balance = Deposits − Meal Cost − Other Share।</div></div>
+        <div class="ibox info" style="margin-bottom:14px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="10.6" x2="12" y2="16.2"/><circle cx="12" cy="7.5" r=".7" fill="currentColor" stroke="none"/></svg><div>এটা শুধু <b>Meal Fund</b>-এর হিসাব — Meal Cost = Rate × (নিজের + Guest Meals), Balance = Meal Deposits − Meal Cost। Other Expense-এর হিসাব ও তার নিজস্ব Deposit সম্পূর্ণ আলাদাভাবে "Other Expenses" পেজে দেখুন।</div></div>
         <div class="card pad-0"><div class="tblwrap"><table class="rtbl">
-          <thead><tr><th>Member</th><th>Meals</th><th>Meal Cost</th><th>Other Share</th><th>Deposits</th><th>Balance</th><th>Status</th></tr></thead>
+          <thead><tr><th>Member</th><th>Meals</th><th>Meal Cost</th><th>Deposits (Meal)</th><th>Balance</th><th>Status</th></tr></thead>
           <tbody id="sm-body"></tbody>
         </table></div></div>
       </section>
@@ -270,6 +332,14 @@
         <div class="fg"><label>Status</label><select id="mm-status"><option>Active</option><option>Inactive</option><option>Left</option></select></div>
       </div>
       <div class="fg"><label>Joined Date</label><input type="date" id="mm-joined"></div>
+      <div class="fg">
+        <label>Inactive Period (ঐচ্ছিক)</label>
+        <div class="fr2">
+          <input type="date" id="mm-inactive-from" placeholder="From">
+          <input type="date" id="mm-inactive-to" placeholder="To">
+        </div>
+        <p class="hint" style="margin-top:4px">এই তারিখ থেকে এই তারিখ পর্যন্ত মেম্বার Inactive থাকবে — মিল বন্ধ থাকবে ও Daily Meal Entry-তে তার নাম আসবে না। খালি রাখলে সবসময় Active হিসেবে গণ্য হবে।</p>
+      </div>
       <div class="fg"><label id="mm-pass-label">Login Password</label><input type="password" id="mm-password" placeholder="Password দিন যাতে সে লগিন করতে পারে"><p class="hint" id="mm-pass-hint" style="margin-top:4px"></p></div>
       <div class="fg"><label>Notes</label><input type="text" id="mm-notes" placeholder="Optional"></div>
     </div>
@@ -294,6 +364,12 @@
           </div>
         </div>
         <div id="bzitem-list" style="margin-top:8px;display:flex;flex-direction:column;gap:6px"></div>
+        <details style="margin-top:10px">
+          <summary style="cursor:pointer;font-size:12.5px;color:var(--primary)">অথবা পুরো লিস্ট একসাথে পেস্ট করুন</summary>
+          <p class="hint" style="margin-top:6px">প্রতি লাইনে একটা আইটেম, শেষে দাম দিন — যেমনঃ "চাল ২ কেজি ১২০" বা "তেল - ৩৫০ টাকা"</p>
+          <textarea id="bz-paste" rows="4" placeholder="চাল ১২০&#10;ডাল ৫০&#10;তেল ৩৫০" style="margin-top:6px"></textarea>
+          <button type="button" class="btn sm" onclick="parseBazarPasteList()" style="margin-top:6px">লিস্ট থেকে আইটেম যোগ করুন</button>
+        </details>
       </div>
 
       <div class="fg"><label>Amount * (মোট)</label><input type="number" id="bzamt" placeholder="500"></div>
@@ -317,13 +393,27 @@
 
 <div class="overlay" id="ov-deposit">
   <div class="modal">
-    <div class="m-head"><h3>Add Deposit</h3><button class="btn icon ghost" onclick="closeM('ov-deposit')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
+    <div class="m-head"><h3 id="dep-modal-title">Add Deposit</h3><button class="btn icon ghost" onclick="closeM('ov-deposit')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
     <div class="m-body">
       <div class="fr2"><div class="fg"><label>Member *</label><select id="dep-member"></select></div><div class="fg"><label>Date</label><input type="date" id="depd"></div></div>
       <div class="fr2"><div class="fg"><label>Amount *</label><input type="number" id="depamt" placeholder="1000"></div><div class="fg"><label>Method</label><select id="depmeth"><option>Cash</option><option>bKash</option><option>Nagad</option><option>Rocket</option><option>Bank</option></select></div></div>
       <div class="fg"><label>Notes</label><input type="text" id="depnote" placeholder="Optional"></div>
     </div>
     <div class="m-foot"><button class="btn" onclick="closeM('ov-deposit')">বাতিল</button><button class="btn primary" id="save-dep" onclick="saveDeposit()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>Save</button></div>
+  </div>
+</div>
+
+<!-- ══ CHANGE PASSWORD (self-service) ══ -->
+<div class="overlay" id="ov-changepass">
+  <div class="modal">
+    <div class="m-head"><h3>Password পরিবর্তন করুন</h3><button class="btn icon ghost" onclick="closeM('ov-changepass')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
+    <div class="m-body">
+      <div class="fg"><label>বর্তমান Password</label><input type="password" id="cp-old" placeholder="বর্তমান Password"></div>
+      <div class="fg"><label>নতুন Password</label><input type="password" id="cp-new" placeholder="নতুন Password (কমপক্ষে ৪ ক্যারেক্টার)"></div>
+      <div class="fg"><label>নতুন Password আবার লিখুন</label><input type="password" id="cp-confirm" placeholder="আবার লিখুন"></div>
+      <div id="cp-err" class="err-box"></div>
+    </div>
+    <div class="m-foot"><button class="btn" onclick="closeM('ov-changepass')">বাতিল</button><button class="btn primary" id="cp-btn" onclick="saveChangePassword()">Password পরিবর্তন করুন</button></div>
   </div>
 </div>
 

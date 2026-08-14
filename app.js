@@ -73,8 +73,14 @@ const AV_COLORS=['#1F6F54','#DD9E33','#2E7B79','#C6553D','#6E5DA6','#3C7DBF','#B
 function avatarColor(id){let h=0;for(let i=0;i<id.length;i++)h=(h*31+id.charCodeAt(i))>>>0;return AV_COLORS[h%AV_COLORS.length];}
 function avatar(m){return `<div class="avatar" style="background:${avatarColor(m.id)}">${initials(m.name)}</div>`;}
 function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function genId(list,prefix){const nums=list.map(x=>parseInt(String(x.id).replace(prefix,''))||0);return prefix+String((nums.length?Math.max(...nums):0)+1).padStart(3,'0');}
 function inMonth(dateStr,month,year){const d=new Date(dateStr+'T00:00:00');return MONTHS[d.getMonth()]===month&&d.getFullYear()===year;}
+// True if a member has been marked inactive (by the Manager/Owner) for a
+// date range that covers dateISO — meal off automatically, hidden from
+// Daily Meal Entry for those dates, even if their overall status is Active.
+function isInactiveOn(m,dateISO){
+  if(!m.inactiveFrom||!m.inactiveTo)return false;
+  return dateISO>=m.inactiveFrom&&dateISO<=m.inactiveTo;
+}
 
 /* ═══════════════════════════════════════════════════════════
    STORAGE — Claude artifact persistent storage (shared across
@@ -83,31 +89,42 @@ function inMonth(dateStr,month,year){const d=new Date(dateStr+'T00:00:00');retur
 /* ═══════════════════════════════════════════════════════════
    SUPABASE DATA LAYER
    ═══════════════════════════════════════════════════════════ */
-function emptySettings(){ return {messName:'',theme:'light',setupDone:false,ownerMemberId:''}; }
+function emptySettings(){ return {messName:'',theme:'light',ownerMemberId:''}; }
 let STATE=null;
 
-async function loadState(){
+// Generates a globally-unique-enough id (no longer relies on scanning an
+// existing list, since ids must now be unique across ALL messes, not just
+// within one). Safe to call many times in a tight loop (e.g. batch-saving
+// a whole day's meal grid) — a per-call counter + timestamp + random tail
+// means no two calls ever collide even in the same millisecond.
+let _idSeq=0;
+function genId(prefix){
+  _idSeq++;
+  return prefix+Date.now().toString(36)+'-'+_idSeq.toString(36)+Math.random().toString(36).slice(2,6);
+}
+
+async function loadState(messId){
   const [s,mem,meals,bazar,other,dep,mgrs]=await Promise.all([
-    supa.from('settings').select('*').eq('id',1).maybeSingle(),
-    supa.from('members').select('*'),
-    supa.from('meal_entries').select('*'),
-    supa.from('bazar_expenses').select('*'),
-    supa.from('other_expenses').select('*'),
-    supa.from('deposits').select('*'),
-    supa.from('managers').select('*'),
+    supa.from('messes').select('*').eq('id',messId).maybeSingle(),
+    supa.from('members').select('*').eq('mess_id',messId),
+    supa.from('meal_entries').select('*').eq('mess_id',messId),
+    supa.from('bazar_expenses').select('*').eq('mess_id',messId),
+    supa.from('other_expenses').select('*').eq('mess_id',messId),
+    supa.from('deposits').select('*').eq('mess_id',messId),
+    supa.from('managers').select('*').eq('mess_id',messId),
   ]);
   const firstErr=[s,mem,meals,bazar,other,dep,mgrs].find(r=>r.error);
   if(firstErr){ toast('Database connect করা যায়নি: '+firstErr.error.message,'er'); return null; }
   return {
+    messId,
     settings: s.data ? {
-      messName:s.data.mess_name||'', theme:s.data.theme||'light',
-      setupDone:!!s.data.setup_done, ownerMemberId:s.data.owner_member_id||''
+      messName:s.data.name||'', theme:s.data.theme||'light', ownerMemberId:s.data.owner_member_id||''
     } : emptySettings(),
-    members:(mem.data||[]).map(r=>({id:r.id,name:r.name,phone:r.phone||'',passwordHash:r.password_hash||'',status:r.status,joined:r.joined||'',left:r.left_date||'',notes:r.notes||''})),
+    members:(mem.data||[]).map(r=>({id:r.id,name:r.name,phone:r.phone||'',passwordHash:r.password_hash||'',status:r.status,joined:r.joined||'',left:r.left_date||'',inactiveFrom:r.inactive_from||'',inactiveTo:r.inactive_to||'',notes:r.notes||''})),
     mealEntries:(meals.data||[]).map(r=>({id:r.id,date:r.date,mid:r.member_id,name:r.member_name,meals:Number(r.meals),guest:Number(r.guest),notes:r.notes||''})),
     bazarExp:(bazar.data||[]).map(r=>({id:r.id,date:r.date,by:r.bought_by||'',amount:Number(r.amount),notes:r.notes||''})),
     otherExp:(other.data||[]).map(r=>({id:r.id,date:r.date,title:r.title,amount:Number(r.amount),notes:r.notes||''})),
-    deposits:(dep.data||[]).map(r=>({id:r.id,date:r.date,mid:r.member_id,name:r.member_name,amount:Number(r.amount),method:r.method||'Cash',notes:r.notes||''})),
+    deposits:(dep.data||[]).map(r=>({id:r.id,date:r.date,mid:r.member_id,name:r.member_name,amount:Number(r.amount),method:r.method||'Cash',type:r.type||'Meal',notes:r.notes||''})),
     managers:(mgrs.data||[]).map(r=>({monthYear:r.month_year,mid:r.member_id,name:r.member_name})),
   };
 }
@@ -124,10 +141,13 @@ function persist(msg){ if(msg)toast(msg,'ok'); refreshAll(); return true; }
    BOOT
    ═══════════════════════════════════════════════════════════ */
 let curPage='dashboard', mFilterStatus='All', mSearch='', editMemberId=null, mealSelDate=todayISO();
-let isAdmin=false;        // isSuperAdmin || isMonthManager — edit rights across data pages
-let isSuperAdmin=false;   // the Owner account created at setup — only role that can touch Settings
+let isAdmin=false;        // isSuperAdmin || isMonthManager — edit rights across data pages (within a mess)
+let isSuperAdmin=false;   // the Owner account created at setup — only role that can touch Settings (within a mess)
 let isMonthManager=false; // whoever is assigned Manager for the CURRENT month
 let currentMember=null;   // the logged-in member's row
+let currentMessId=null;   // which mess's data STATE currently holds
+let isPlatformAdmin=false;// platform-level Super Admin — not tied to any one mess, manages all messes
+let platformAdmin=null;   // the logged-in platform_admins row
 
 // Simple client-side password hashing (SHA-256 + a fixed app salt). This is
 // NOT the same as proper server-side bcrypt/Argon2 hashing, but it means
@@ -147,17 +167,11 @@ async function boot(){
       '<p>index.html-এর একদম শুরুতে <code>SUPABASE_URL</code> আর <code>SUPABASE_ANON_KEY</code> বসিয়ে আবার deploy করুন। README.md দেখুন।</p></div>';
     return;
   }
-  STATE=await loadState();
-  if(!STATE){
-    document.body.innerHTML='<div style="max-width:520px;margin:80px auto;font-family:sans-serif;line-height:1.6;padding:0 20px">'+
-      '<h2>⚠️ Database-এ কানেক্ট করা যায়নি</h2><p>Supabase URL/Key ঠিক আছে কিনা, আর schema.sql (ও migration.sql, যদি আগে schema.sql রান করা থাকে) রান করা হয়েছে কিনা চেক করুন।</p></div>';
-    return;
-  }
-  applyTheme();
-  if(!STATE.settings.setupDone){ document.getElementById('setup-screen').style.display='flex'; return; }
-  document.getElementById('login-title').textContent=STATE.settings.messName||'মেস খাতা';
-  document.getElementById('login-sub').textContent=(STATE.settings.messName?('"'+STATE.settings.messName+'"')+'-এ ':'')+'লগিন করতে আপনার ফোন নম্বর ও Password দিন।';
+  document.documentElement.setAttribute('data-theme','light');
+  document.getElementById('login-title').textContent='মেস খাতা';
+  document.getElementById('login-sub').textContent='লগিন করতে আপনার ফোন নম্বর ও Password দিন।';
   document.getElementById('login-screen').style.display='flex';
+  checkPlatformAdminExists();
 }
 function applyTheme(){
   const th=(STATE&&STATE.settings&&STATE.settings.theme)||'light';
@@ -167,10 +181,22 @@ function applyTheme(){
 function toggleTheme(){
   STATE.settings.theme=STATE.settings.theme==='dark'?'light':'dark';
   applyTheme();
-  supa.from('settings').update({theme:STATE.settings.theme}).eq('id',1).then(()=>{});
+  supa.from('messes').update({theme:STATE.settings.theme}).eq('id',currentMessId).then(()=>{});
 }
 
-/* ── Setup (first run — creates the Mess + the Owner/Super-Admin account) ── */
+/* ── Create a new Mess (any time, from the login screen — not just once) ── */
+function openSetupScreen(){
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('su-name').value='';document.getElementById('su-owner-name').value='';
+  document.getElementById('su-owner-phone').value='';document.getElementById('su-owner-pass').value='';
+  document.getElementById('su-err').style.display='none';
+  document.getElementById('setup-screen').style.display='flex';
+}
+function backToLogin(){
+  document.getElementById('setup-screen').style.display='none';
+  document.getElementById('sa-login-screen').style.display='none';
+  document.getElementById('login-screen').style.display='flex';
+}
 async function doSetup(){
   const messName=document.getElementById('su-name').value.trim();
   const ownerName=document.getElementById('su-owner-name').value.trim();
@@ -182,24 +208,32 @@ async function doSetup(){
   if(!ownerPhone){err.textContent='ফোন নম্বর দিন';err.style.display='block';return;}
   if(!ownerPass||ownerPass.length<4){err.textContent='কমপক্ষে ৪ ক্যারেক্টারের Password দিন';err.style.display='block';return;}
   setBusy('su-btn',true);
-  const ownerId='MB-001';
+  const messId=genId('MS-');
+  const ownerId=genId('MB-');
   const passwordHash=await hashPassword(ownerPass);
-  const memberOk=await dbOp(supa.from('members').insert({id:ownerId,name:ownerName,phone:ownerPhone,password_hash:passwordHash,status:'Active',joined:todayISO(),notes:''}),'Owner account তৈরি করা যায়নি');
-  if(!memberOk){ setBusy('su-btn',false,'খাতা তৈরি করুন'); err.textContent='Owner account তৈরি করা যায়নি'; err.style.display='block'; return; }
-  const settingsOk=await dbOp(supa.from('settings').update({mess_name:messName,owner_member_id:ownerId,setup_done:true}).eq('id',1),'সেটআপ সেভ করা যায়নি');
+  const messOk=await dbOp(supa.from('messes').insert({id:messId,name:messName,theme:'light'}),'মেস তৈরি করা যায়নি');
+  if(!messOk){ setBusy('su-btn',false,'খাতা তৈরি করুন'); err.textContent='মেস তৈরি করা যায়নি'; err.style.display='block'; return; }
+  const memberOk=await dbOp(supa.from('members').insert({id:ownerId,mess_id:messId,name:ownerName,phone:ownerPhone,password_hash:passwordHash,status:'Active',joined:todayISO(),notes:''}),'Owner account তৈরি করা যায়নি — হতে পারে এই ফোন নম্বর দিয়ে আগে থেকেই অন্য কোথাও একজন member আছে');
+  if(!memberOk){ setBusy('su-btn',false,'খাতা তৈরি করুন'); return; }
+  const ownerLinkOk=await dbOp(supa.from('messes').update({owner_member_id:ownerId}).eq('id',messId),'সেটআপ সেভ করা যায়নি');
   setBusy('su-btn',false,'খাতা তৈরি করুন');
-  if(settingsOk){
-    STATE.settings={messName,theme:'light',setupDone:true,ownerMemberId:ownerId};
-    STATE.members.push({id:ownerId,name:ownerName,phone:ownerPhone,status:'Active',joined:todayISO(),left:'',notes:''});
+  if(ownerLinkOk){
+    currentMessId=messId;
+    STATE={messId,settings:{messName,theme:'light',ownerMemberId:ownerId},members:[{id:ownerId,name:ownerName,phone:ownerPhone,passwordHash,status:'Active',joined:todayISO(),left:'',inactiveFrom:'',inactiveTo:'',notes:''}],mealEntries:[],bazarExp:[],otherExp:[],deposits:[],managers:[]};
     document.getElementById('setup-screen').style.display='none';
     currentMember=STATE.members[0]; isSuperAdmin=true; isMonthManager=false; isAdmin=true;
+    applyTheme();
     showApp();
   } else { err.textContent='সেটআপ সেভ করা যায়নি — Supabase schema/migration ঠিকমতো রান হয়েছে কিনা দেখুন'; err.style.display='block'; }
 }
 
 /* ── Login (phone + password) ─────────────────────────────────
-   Role is computed automatically:
-   • Owner (created at setup)                    → Super Admin (full access + Settings)
+   phone নম্বর গোটা প্ল্যাটফর্ম জুড়ে ইউনিক, তাই মেস আলাদা করে বাছাই করা
+   লাগে না — যে ফোন নম্বর দিয়ে লগিন করা হচ্ছে, সেটা প্রথমে platform_admins-এ
+   খোঁজা হয় (Super Admin কিনা), তারপর members-এ (কোন মেসের member সেটা
+   member.mess_id থেকেই বোঝা যায়)।
+   Role is computed automatically (within that mess):
+   • Owner (created at setup)                    → Super Admin of that mess (full access + Settings)
    • Whoever is this month's assigned Manager     → full access to data (not Settings)
    • Everyone else with a valid login             → view-only access to everything
 */
@@ -215,23 +249,197 @@ async function doLogin(){
   const pass=document.getElementById('login-pass').value;
   const err=document.getElementById('login-err'); err.style.display='none';
   if(!phone||!pass){err.textContent='ফোন নম্বর ও Password দিন';err.style.display='block';return;}
-  const member=STATE.members.find(m=>m.phone&&m.phone===phone);
-  if(!member){err.textContent='এই ফোন নম্বর দিয়ে কোনো member পাওয়া যায়নি';err.style.display='block';return;}
-  if(!member.passwordHash){err.textContent='আপনার Password এখনো সেট করা হয়নি — Manager/Owner-এর সাথে যোগাযোগ করুন';err.style.display='block';return;}
   setBusy('login-btn',true);
   const hash=await hashPassword(pass);
+  const {data:memRows,error:memErr}=await supa.from('members').select('*').eq('phone',phone).limit(1);
   setBusy('login-btn',false,'লগিন করুন');
-  if(hash!==member.passwordHash){err.textContent='ভুল Password, আবার চেষ্টা করুন';err.style.display='block';return;}
-  currentMember=member;
-  isSuperAdmin=(STATE.settings.ownerMemberId===member.id);
+  if(memErr){ err.textContent='Database error: '+memErr.message; err.style.display='block'; return; }
+  if(!memRows||!memRows.length){err.textContent='এই ফোন নম্বর দিয়ে কোনো member পাওয়া যায়নি';err.style.display='block';return;}
+  const row=memRows[0];
+  if(!row.password_hash){err.textContent='আপনার Password এখনো সেট করা হয়নি — Manager/Owner-এর সাথে যোগাযোগ করুন';err.style.display='block';return;}
+  if(hash!==row.password_hash){err.textContent='ভুল Password, আবার চেষ্টা করুন';err.style.display='block';return;}
+  currentMessId=row.mess_id;
+  STATE=await loadState(currentMessId);
+  if(!STATE){ err.textContent='Database থেকে মেসের ডেটা লোড করা যায়নি'; err.style.display='block'; return; }
+  currentMember=STATE.members.find(m=>m.id===row.id);
+  isSuperAdmin=(STATE.settings.ownerMemberId===row.id);
   const mgr=managerFor(curMon(),curYr());
-  isMonthManager=!!(mgr&&mgr.mid===member.id);
+  isMonthManager=!!(mgr&&mgr.mid===row.id);
   isAdmin=isSuperAdmin||isMonthManager;
+  isPlatformAdmin=false; platformAdmin=null;
+  applyTheme();
   document.getElementById('login-screen').style.display='none';
   document.getElementById('login-phone').value='';document.getElementById('login-pass').value='';
   showApp();
 }
 function doLogout(){ location.reload(); }
+
+/* ═══════════════════════════════════════════════════════════
+   PLATFORM SUPER ADMIN — separate from a mess's own Owner. Controls
+   ALL messes from one dashboard. Not tied to any single mess_id.
+   ═══════════════════════════════════════════════════════════ */
+async function checkPlatformAdminExists(){
+  const {count}=await supa.from('platform_admins').select('*',{count:'exact',head:true});
+  const link=document.getElementById('sa-entry-link');
+  if(link)link.dataset.exists=count>0?'1':'0';
+}
+function openSuperAdminScreen(){
+  document.getElementById('login-screen').style.display='none';
+  const link=document.getElementById('sa-entry-link');
+  const isFirstRun=link&&link.dataset.exists==='0';
+  document.getElementById('sa-mode-title').textContent=isFirstRun?'প্রথম Super Admin অ্যাকাউন্ট বানান':'Super Admin লগিন';
+  document.getElementById('sa-mode-sub').textContent=isFirstRun?'এখনো কোনো Super Admin নেই — নিচের ফর্ম দিয়ে প্রথমটা বানিয়ে নিন।':'আপনার Super Admin ফোন নম্বর ও Password দিন।';
+  document.getElementById('sa-name-wrap').style.display=isFirstRun?'':'none';
+  document.getElementById('sa-btn').textContent=isFirstRun?'তৈরি করুন':'লগিন করুন';
+  document.getElementById('sa-btn').onclick=isFirstRun?createFirstPlatformAdmin:platformAdminLogin;
+  document.getElementById('sa-name').value='';document.getElementById('sa-phone').value='';document.getElementById('sa-pass').value='';
+  document.getElementById('sa-err').style.display='none';
+  document.getElementById('sa-login-screen').style.display='flex';
+}
+async function createFirstPlatformAdmin(){
+  const {count}=await supa.from('platform_admins').select('*',{count:'exact',head:true});
+  const err=document.getElementById('sa-err'); err.style.display='none';
+  if(count>0){ err.textContent='ইতিমধ্যে একজন Super Admin আছে — লগিন ফর্ম ব্যবহার করুন'; err.style.display='block'; openSuperAdminScreen(); return; }
+  const name=document.getElementById('sa-name').value.trim()||'Super Admin';
+  const phone=document.getElementById('sa-phone').value.trim();
+  const pass=document.getElementById('sa-pass').value;
+  if(!phone){err.textContent='ফোন নম্বর দিন';err.style.display='block';return;}
+  if(!pass||pass.length<4){err.textContent='কমপক্ষে ৪ ক্যারেক্টারের Password দিন';err.style.display='block';return;}
+  setBusy('sa-btn',true);
+  const passwordHash=await hashPassword(pass);
+  const ok=await dbOp(supa.from('platform_admins').insert({phone,name,password_hash:passwordHash}),'Super Admin অ্যাকাউন্ট তৈরি করা যায়নি');
+  setBusy('sa-btn',false,'তৈরি করুন');
+  if(ok){ platformAdmin={phone,name}; isPlatformAdmin=true; document.getElementById('sa-login-screen').style.display='none'; showSuperAdminDash(); }
+}
+async function platformAdminLogin(){
+  const phone=document.getElementById('sa-phone').value.trim();
+  const pass=document.getElementById('sa-pass').value;
+  const err=document.getElementById('sa-err'); err.style.display='none';
+  if(!phone||!pass){err.textContent='ফোন নম্বর ও Password দিন';err.style.display='block';return;}
+  setBusy('sa-btn',true);
+  const hash=await hashPassword(pass);
+  const {data,error}=await supa.from('platform_admins').select('*').eq('phone',phone).maybeSingle();
+  setBusy('sa-btn',false,'লগিন করুন');
+  if(error){err.textContent='Database error: '+error.message;err.style.display='block';return;}
+  if(!data){err.textContent='এই ফোন নম্বরে কোনো Super Admin অ্যাকাউন্ট নেই';err.style.display='block';return;}
+  if(hash!==data.password_hash){err.textContent='ভুল Password';err.style.display='block';return;}
+  platformAdmin={phone:data.phone,name:data.name}; isPlatformAdmin=true;
+  document.getElementById('sa-login-screen').style.display='none';
+  showSuperAdminDash();
+}
+function saLogout(){ location.reload(); }
+/* ── Change my own password ───────────────────────────────── */
+function openChangePasswordModal(){
+  document.getElementById('cp-old').value='';document.getElementById('cp-new').value='';document.getElementById('cp-confirm').value='';
+  document.getElementById('cp-err').style.display='none';
+  setBusy('cp-btn',false,'Password পরিবর্তন করুন');openM('ov-changepass');
+}
+async function saveChangePassword(){
+  const err=document.getElementById('cp-err'); err.style.display='none';
+  const oldPass=document.getElementById('cp-old').value;
+  const newPass=document.getElementById('cp-new').value;
+  const confirmPass=document.getElementById('cp-confirm').value;
+  if(!currentMember||!currentMember.id){ err.textContent='আপনি সরাসরি একজন member হিসেবে লগিন করেননি'; err.style.display='block'; return; }
+  if(currentMember.passwordHash){
+    if(!oldPass){ err.textContent='বর্তমান Password দিন'; err.style.display='block'; return; }
+    const oldHash=await hashPassword(oldPass);
+    if(oldHash!==currentMember.passwordHash){ err.textContent='বর্তমান Password ভুল'; err.style.display='block'; return; }
+  }
+  if(!newPass||newPass.length<4){ err.textContent='নতুন Password কমপক্ষে ৪ ক্যারেক্টারের হতে হবে'; err.style.display='block'; return; }
+  if(newPass!==confirmPass){ err.textContent='নতুন Password দুইবার একই দিন'; err.style.display='block'; return; }
+  setBusy('cp-btn',true);
+  const newHash=await hashPassword(newPass);
+  const ok=await dbOp(supa.from('members').update({password_hash:newHash}).eq('id',currentMember.id).eq('mess_id',currentMessId),'Password পরিবর্তন করা যায়নি');
+  setBusy('cp-btn',false,'Password পরিবর্তন করুন');
+  if(ok){
+    currentMember.passwordHash=newHash;
+    const m=STATE.members.find(x=>x.id===currentMember.id); if(m)m.passwordHash=newHash;
+    closeM('ov-changepass');
+    toast('Password পরিবর্তন হয়েছে','ok');
+  }
+}
+async function showSuperAdminDash(){
+  document.getElementById('sa-whoami').textContent=platformAdmin.name+' (Super Admin)';
+  document.getElementById('sa-dash-screen').style.display='flex';
+  await renderSuperAdminDash();
+}
+let saMessesCache=[];
+async function renderSuperAdminDash(){
+  const body=document.getElementById('sa-mess-body');
+  body.innerHTML=`<tr><td colspan="7" class="empty-row">লোড হচ্ছে...</td></tr>`;
+  const [messesR,membersR,mealsR,bazarR]=await Promise.all([
+    supa.from('messes').select('*'),
+    supa.from('members').select('id,mess_id,status'),
+    supa.from('meal_entries').select('mess_id,date,meals,guest'),
+    supa.from('bazar_expenses').select('mess_id,date,amount'),
+  ]);
+  if(messesR.error){ body.innerHTML=`<tr><td colspan="7" class="empty-row">লোড করা যায়নি: ${escapeHtml(messesR.error.message)}</td></tr>`; return; }
+  const messes=messesR.data||[], members=membersR.data||[], meals=mealsR.data||[], bazar=bazarR.data||[];
+  const mon=curMon(),yr=curYr();
+  saMessesCache=messes;
+  const rows=messes.map(ms=>{
+    const memList=members.filter(m=>m.mess_id===ms.id);
+    const activeCount=memList.filter(m=>m.status==='Active').length;
+    const monthMeals=meals.filter(e=>e.mess_id===ms.id&&inMonth(e.date,mon,yr)).reduce((a,e)=>a+N(e.meals)+N(e.guest),0);
+    const monthBazar=bazar.filter(e=>e.mess_id===ms.id&&inMonth(e.date,mon,yr)).reduce((a,e)=>a+N(e.amount),0);
+    return {ms,memberCount:memList.length,activeCount,monthMeals,monthBazar};
+  });
+  document.getElementById('sa-stats').innerHTML=[
+    [ICONS.STORE,messes.length,'মোট Mess','c-primary'],
+    [ICONS.USERS,members.length,'মোট Member (সব মেস মিলিয়ে)','c-accent'],
+    [ICONS.CART,money(rows.reduce((a,r)=>a+r.monthBazar,0)),'এই মাসের সর্বমোট বাজার','c-danger'],
+  ].map(([ic,v,l,c])=>`<div class="card stat ${c}"><div class="ic">${ic}</div><div class="lab">${l}</div><div class="val">${v}</div></div>`).join('');
+  body.innerHTML=rows.map(r=>`<tr>
+    <td data-label="Mess">${escapeHtml(r.ms.name)||'—'}</td>
+    <td data-label="Members" class="num">${r.memberCount}</td>
+    <td data-label="Active" class="num">${r.activeCount}</td>
+    <td data-label="এই মাসের Meal" class="num">${r.monthMeals.toFixed(1).replace(/\.0$/,'')}</td>
+    <td data-label="এই মাসের বাজার" class="num">${money(r.monthBazar)}</td>
+    <td data-label="তৈরি">${r.ms.created_at?fmtDate(r.ms.created_at.slice(0,10)):'—'}</td>
+    <td data-label=""><div style="display:flex;gap:6px;justify-content:flex-end">
+      <button class="btn sm" onclick="openMessAsAdmin('${r.ms.id}')">Open</button>
+      <button class="btn icon ghost sm" onclick="deleteMess('${r.ms.id}','${escapeHtml(r.ms.name)}')" title="Delete">${ICONS.TRASH}</button>
+    </div></td></tr>`).join('')||emptyRow(7,'কোনো mess তৈরি হয়নি এখনো');
+}
+function saMessSearch(v){
+  const q=v.toLowerCase().trim();
+  document.querySelectorAll('#sa-mess-body tr').forEach(tr=>{
+    tr.style.display=!q||tr.textContent.toLowerCase().includes(q)?'':'none';
+  });
+}
+// Opens a mess's own dashboard/app with full Owner-level access — lets the
+// platform Super Admin manage any mess's data without needing that mess's
+// member password.
+async function openMessAsAdmin(messId){
+  currentMessId=messId;
+  STATE=await loadState(messId);
+  if(!STATE){ toast('মেসের ডেটা লোড করা যায়নি','er'); return; }
+  const ownerId=STATE.settings.ownerMemberId;
+  currentMember=STATE.members.find(m=>m.id===ownerId)||{id:'SA',name:platformAdmin.name+' (Super Admin)'};
+  isSuperAdmin=true; isMonthManager=false; isAdmin=true;
+  applyTheme();
+  document.getElementById('sa-dash-screen').style.display='none';
+  showApp(true);
+}
+async function backToSuperAdminDash(){
+  isPlatformAdmin=true; STATE=null; currentMessId=null; currentMember=null;
+  isSuperAdmin=false; isMonthManager=false; isAdmin=false;
+  document.getElementById('app').style.display='none';
+  document.getElementById('sa-dash-screen').style.display='flex';
+  await renderSuperAdminDash();
+}
+async function deleteMess(messId,name){
+  if(!confirm(`"${name}" মেসটা পুরোপুরি ডিলিট করবেন? এর সব member/meal/bazar/deposit ইতিহাস চিরতরে মুছে যাবে — এটা আর ফেরত আনা যাবে না।`))return;
+  const tables=['meal_entries','bazar_expenses','other_expenses','deposits','managers','members'];
+  for(const t of tables){
+    const {error}=await supa.from(t).delete().eq('mess_id',messId);
+    if(error){ toast(`${t} ডিলিট করা যায়নি: `+error.message,'er'); return; }
+  }
+  const {error:mErr}=await supa.from('messes').delete().eq('id',messId);
+  if(mErr){ toast('Mess ডিলিট করা যায়নি: '+mErr.message,'er'); return; }
+  toast('Mess ডিলিট হয়েছে','ok');
+  renderSuperAdminDash();
+}
 function registerServiceWorker(){
   if('serviceWorker' in navigator){
     navigator.serviceWorker.register('sw.js').catch(()=>{ /* non-fatal — app still works without it */ });
@@ -239,20 +447,24 @@ function registerServiceWorker(){
 }
 
 /* ── App shell ─────────────────────────────────────────────── */
-function showApp(){
+function showApp(fromSuperAdmin){
   document.getElementById('app').style.display='flex';
   document.getElementById('sb-messname').textContent=STATE.settings.messName||'My Mess';
   document.getElementById('me-date').value=mealSelDate;
   document.getElementById('sm-mon').innerHTML=MONTHS.map(m=>`<option>${m}</option>`).join('');
   document.getElementById('sm-mon').value=curMon();
   document.getElementById('sm-yr').value=curYr();
-  ['bz-mon-f','ot-mon-f','dep-mon-f'].forEach(id=>{
+  ['bz-mon-f','ot-mon-f','dep-mon-f','ot-dep-mon-f'].forEach(id=>{
     document.getElementById(id).innerHTML='<option value="">সব</option>'+MONTHS.map(m=>`<option>${m}</option>`).join('');
   });
   populateMemberSelects();
   // Settings (Mess name + Manager roster) is Super-Admin (Owner) only
   document.querySelector('.sb-item[data-page="settings"]').style.display=isSuperAdmin?'':'none';
   document.getElementById('sb-whoami').innerHTML=`${ICONS.USERS}<span>${escapeHtml(currentMember.name)} ${isSuperAdmin?'(Owner)':isMonthManager?'(This Month\u2019s Manager)':'(View Only)'}</span>`;
+  const backBtn=document.getElementById('sb-back-to-sa');
+  if(backBtn)backBtn.style.display=(isPlatformAdmin&&fromSuperAdmin)?'':'none';
+  const cpBtn=document.getElementById('sb-change-pass');
+  if(cpBtn)cpBtn.style.display=(currentMember&&currentMember.id&&!fromSuperAdmin)?'':'none';
   let vb=document.getElementById('view-badge');
   if(!isAdmin){
     if(!vb){
@@ -268,8 +480,8 @@ function openDrawer(){document.getElementById('sidebar').classList.add('on');doc
 function closeDrawer(){document.getElementById('sidebar').classList.remove('on');document.getElementById('drawerBd').classList.remove('on');}
 
 
-const PG={dashboard:'Dashboard',members:'Members',meals:'Daily Meal Entry',bazar:'Bazar Expense',other:'Other Expenses',deposits:'Deposits',summary:'Monthly Summary',settings:'Settings'};
-const PG_ADD={members:'Add Member',bazar:'Add Bazar Expense',other:'Add Other Expense',deposits:'Add Deposit'};
+const PG={dashboard:'Dashboard',members:'Members',meals:'Daily Meal Entry',bazar:'Bazar Expense',other:'Other Expenses',deposits:'Deposits (Meal Fund)',summary:'Monthly Summary (Meal Fund)',settings:'Settings'};
+const PG_ADD={members:'Add Member',bazar:'Add Bazar Expense',other:'Add Other Expense',deposits:'Add Deposit (Meal Fund)'};
 function goTo(p){
   curPage=p;
   document.querySelectorAll('.sb-item').forEach(b=>b.classList.toggle('on',b.dataset.page===p));
@@ -315,7 +527,8 @@ function populateMemberSelects(){
 }
 
 /* ═══════════════════════════════════════════════════════════
-   MEAL-RATE MATH
+   MEAL-RATE MATH — Meal fund and Other-Expense fund are now tracked
+   completely separately (separate deposit pools, separate balances).
    ═══════════════════════════════════════════════════════════ */
 function mealRateFor(month,year){
   const bazar=STATE.bazarExp.filter(e=>inMonth(e.date,month,year)).reduce((a,e)=>a+N(e.amount),0);
@@ -329,18 +542,24 @@ function memberMealCount(mid,month,year){
   return STATE.mealEntries.filter(e=>e.mid===mid&&inMonth(e.date,month,year)).reduce((a,e)=>({m:a.m+N(e.meals),g:a.g+N(e.guest)}),{m:0,g:0});
 }
 function managerFor(month,year){return STATE.managers.find(x=>x.monthYear===month+'-'+year);}
+// Meal fund only: meal cost vs Meal-type deposits.
 function memberSummary(mid,month,year){
-  const member=STATE.members.find(x=>x.id===mid);
   const {m,g}=memberMealCount(mid,month,year);
   const {rate}=mealRateFor(month,year);
   const mealCost=Math.round((m+g)*rate);
+  const dep=STATE.deposits.filter(p=>p.mid===mid&&(p.type||'Meal')==='Meal'&&inMonth(p.date,month,year)).reduce((a,p)=>a+N(p.amount),0);
+  const bal=dep-mealCost;
+  const status=bal<0?'Due':bal>0?'Advance':'Settled';
+  return {meals:m,guest:g,mealCost,deposits:dep,balance:bal,status};
+}
+// Other-Expense fund only: equal per-active-member share vs Other-type deposits.
+function otherFundSummary(mid,month,year){
   const activeCount=STATE.members.filter(x=>x.status!=='Left').length||1;
   const otherShare=Math.round(otherExpenseFor(month,year)/activeCount);
-  const totalCost=mealCost+otherShare;
-  const dep=STATE.deposits.filter(p=>p.mid===mid&&inMonth(p.date,month,year)).reduce((a,p)=>a+N(p.amount),0);
-  const bal=dep-totalCost;
+  const dep=STATE.deposits.filter(p=>p.mid===mid&&p.type==='Other'&&inMonth(p.date,month,year)).reduce((a,p)=>a+N(p.amount),0);
+  const bal=dep-otherShare;
   const status=bal<0?'Due':bal>0?'Advance':'Settled';
-  return {meals:m,guest:g,mealCost,otherShare,totalCost,deposits:dep,balance:bal,status};
+  return {otherShare,deposits:dep,balance:bal,status};
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -351,8 +570,8 @@ function renderDash(){
   const activeCount=STATE.members.filter(m=>m.status==='Active').length;
   const todayMeals=STATE.mealEntries.filter(e=>e.date===today).reduce((a,e)=>a+N(e.meals)+N(e.guest),0);
   const {bazar,rate}=mealRateFor(mon,yr);
-  const monthDeposits=STATE.deposits.filter(p=>inMonth(p.date,mon,yr)).reduce((a,p)=>a+N(p.amount),0);
-  const monthCost=STATE.members.reduce((a,m)=>a+memberSummary(m.id,mon,yr).totalCost,0);
+  const monthDeposits=STATE.deposits.filter(p=>(p.type||'Meal')==='Meal'&&inMonth(p.date,mon,yr)).reduce((a,p)=>a+N(p.amount),0);
+  const monthCost=STATE.members.reduce((a,m)=>a+memberSummary(m.id,mon,yr).mealCost,0);
   const balance=monthDeposits-monthCost;
   const mgr=managerFor(mon,yr);
   const stats=[
@@ -360,8 +579,8 @@ function renderDash(){
     [ICONS.MEAL,String(todayMeals.toFixed(1)).replace(/\.0$/,''),"আজকের Meal",'c-accent'],
     [ICONS.CART,money(bazar),'এই মাসের বাজার','c-danger'],
     [ICONS.CHART,money(rate.toFixed(2)),'Meal Rate','c-info'],
-    [ICONS.CASH,money(monthDeposits),'এই মাসের Deposit','c-success'],
-    [ICONS.ALERT,money(Math.abs(balance))+(balance<0?' (Due)':' (Surplus)'),'Month Balance',balance<0?'c-danger':'c-success'],
+    [ICONS.CASH,money(monthDeposits),'এই মাসের Meal Deposit','c-success'],
+    [ICONS.ALERT,money(Math.abs(balance))+(balance<0?' (Due)':' (Surplus)'),'Meal Fund Balance',balance<0?'c-danger':'c-success'],
     [ICONS.CROWN,mgr?mgr.name:'নির্ধারিত নয়',"এই মাসের Manager",mgr?'c-accent':'c-danger'],
   ];
   document.getElementById('dash-stats').innerHTML=stats.map(([ic,v,l,c])=>
@@ -402,7 +621,7 @@ function renderMembers(){
   document.getElementById('mem-body').innerHTML=list.map(m=>`<tr>
     <td data-label="Member"><span style="display:flex;align-items:center;gap:10px;cursor:pointer" onclick="openLedger('${m.id}')">${avatar(m)}<b>${escapeHtml(m.name)}</b></span></td>
     <td data-label="Phone">${escapeHtml(m.phone)||'—'}</td>
-    <td data-label="Status">${badge(m.status)}</td>
+    <td data-label="Status">${badge(m.status)}${isInactiveOn(m,todayISO())?` <span class="badge am" title="${fmtDate(m.inactiveFrom)} – ${fmtDate(m.inactiveTo)}">Inactive Now</span>`:m.inactiveFrom&&m.inactiveTo?` <span class="badge gy" style="font-size:10px">${fmtDate(m.inactiveFrom)}–${fmtDate(m.inactiveTo)}</span>`:''}</td>
     <td data-label="Joined">${fmtDate(m.joined)}</td>
     <td data-label="Notes" style="color:var(--muted)">${escapeHtml(m.notes)}</td>
     <td data-label="Actions"><div style="display:flex;gap:6px;justify-content:flex-end">
@@ -421,11 +640,13 @@ function openMemberModal(id){
     const m=STATE.members.find(x=>x.id===id);
     document.getElementById('mm-name').value=m.name;document.getElementById('mm-phone').value=m.phone;
     document.getElementById('mm-status').value=m.status;document.getElementById('mm-joined').value=m.joined||todayISO();
+    document.getElementById('mm-inactive-from').value=m.inactiveFrom||'';document.getElementById('mm-inactive-to').value=m.inactiveTo||'';
     document.getElementById('mm-notes').value=m.notes;
     document.getElementById('mm-pass-hint').textContent=m.passwordHash?'পাসওয়ার্ড আগে থেকেই সেট আছে — বদলাতে চাইলে নতুনটা লিখুন, নাহলে খালি রাখুন।':'এখনো কোনো পাসওয়ার্ড সেট করা হয়নি, তাই সে এখনো লগিন করতে পারবে না।';
   } else {
     document.getElementById('mm-name').value='';document.getElementById('mm-phone').value='';
     document.getElementById('mm-status').value='Active';document.getElementById('mm-joined').value=todayISO();
+    document.getElementById('mm-inactive-from').value='';document.getElementById('mm-inactive-to').value='';
     document.getElementById('mm-notes').value='';
     document.getElementById('mm-pass-hint').textContent='খালি রাখলে সে এখনো লগিন করতে পারবে না, পরে বসিয়ে দিতে পারবেন।';
   }
@@ -440,6 +661,10 @@ async function saveMember(){
     toast('এই ফোন নম্বর দিয়ে আগে থেকেই একজন member আছে','er'); return;
   }
   const passRaw=document.getElementById('mm-password').value;
+  const inactiveFrom=document.getElementById('mm-inactive-from').value||'';
+  const inactiveTo=document.getElementById('mm-inactive-to').value||'';
+  if((inactiveFrom&&!inactiveTo)||(!inactiveFrom&&inactiveTo)){toast('Inactive Period-এর দুইটাই (From ও To) দিন, নাহলে দুইটাই খালি রাখুন','er');return;}
+  if(inactiveFrom&&inactiveTo&&inactiveFrom>inactiveTo){toast('Inactive To তারিখ, From তারিখের পরে হতে হবে','er');return;}
   setBusy('save-mem',true);
   let ok;
   if(editMemberId){
@@ -450,19 +675,19 @@ async function saveMember(){
     if(newStatus==='Active')leftDate='';
     const joined=document.getElementById('mm-joined').value;
     const notes=document.getElementById('mm-notes').value.trim();
-    const patch={name,phone,status:newStatus,joined:joined||null,left_date:leftDate||null,notes};
+    const patch={name,phone,status:newStatus,joined:joined||null,left_date:leftDate||null,inactive_from:inactiveFrom||null,inactive_to:inactiveTo||null,notes};
     let newHash=m.passwordHash;
     if(passRaw){ newHash=await hashPassword(passRaw); patch.password_hash=newHash; }
-    ok=await dbOp(supa.from('members').update(patch).eq('id',editMemberId),'Member আপডেট করা যায়নি');
-    if(ok){ m.name=name;m.phone=phone;m.status=newStatus;m.joined=joined;m.left=leftDate;m.notes=notes;m.passwordHash=newHash; }
+    ok=await dbOp(supa.from('members').update(patch).eq('id',editMemberId).eq('mess_id',currentMessId),'Member আপডেট করা যায়নি');
+    if(ok){ m.name=name;m.phone=phone;m.status=newStatus;m.joined=joined;m.left=leftDate;m.inactiveFrom=inactiveFrom;m.inactiveTo=inactiveTo;m.notes=notes;m.passwordHash=newHash; }
   } else {
-    const id=genId(STATE.members,'MB-');
+    const id=genId('MB-');
     const status=document.getElementById('mm-status').value;
     const joined=document.getElementById('mm-joined').value;
     const notes=document.getElementById('mm-notes').value.trim();
     const passwordHash=passRaw?await hashPassword(passRaw):'';
-    ok=await dbOp(supa.from('members').insert({id,name,phone,password_hash:passwordHash,status,joined:joined||null,notes}),'Member যোগ করা যায়নি');
-    if(ok)STATE.members.push({id,name,phone,passwordHash,status,joined,left:'',notes});
+    ok=await dbOp(supa.from('members').insert({id,mess_id:currentMessId,name,phone,password_hash:passwordHash,status,joined:joined||null,inactive_from:inactiveFrom||null,inactive_to:inactiveTo||null,notes}),'Member যোগ করা যায়নি — হতে পারে এই ফোন নম্বর দিয়ে আগে থেকেই কোথাও একজন member আছে');
+    if(ok)STATE.members.push({id,name,phone,passwordHash,status,joined,left:'',inactiveFrom,inactiveTo,notes});
   }
   setBusy('save-mem',false,ICONS.CHECK+'Save');
   if(ok){ closeM('ov-member'); persist(editMemberId?'Member আপডেট হয়েছে':'Member যোগ হয়েছে'); }
@@ -471,7 +696,7 @@ async function delMember(id){
   if(!requireAdmin())return;
   if(id===STATE.settings.ownerMemberId){ toast('Owner account ডিলিট করা যাবে না','er'); return; }
   if(!confirm('এই member ডিলিট করবেন? তার আগের meal/deposit রেকর্ড থেকে যাবে।'))return;
-  const ok=await dbOp(supa.from('members').delete().eq('id',id),'Member ডিলিট করা যায়নি');
+  const ok=await dbOp(supa.from('members').delete().eq('id',id).eq('mess_id',currentMessId),'Member ডিলিট করা যায়নি');
   if(ok){ STATE.members=STATE.members.filter(m=>m.id!==id); persist('Member ডিলিট হয়েছে'); }
 }
 
@@ -481,12 +706,14 @@ function openLedger(id){
   document.getElementById('led-title').innerHTML=`<span style="display:flex;align-items:center;gap:9px">${avatar(m)}${escapeHtml(m.name)}</span>`;
   const mon=curMon(),yr=curYr();
   const s=memberSummary(id,mon,yr);
-  const totalDep=STATE.deposits.filter(p=>p.mid===id).reduce((a,p)=>a+N(p.amount),0);
+  const os=otherFundSummary(id,mon,yr);
+  const totalDep=STATE.deposits.filter(p=>p.mid===id&&(p.type||'Meal')==='Meal').reduce((a,p)=>a+N(p.amount),0);
   const totalMeals=STATE.mealEntries.filter(e=>e.mid===id).reduce((a,e)=>a+N(e.meals)+N(e.guest),0);
   document.getElementById('led-stats').innerHTML=[
-    [money(s.balance<0?Math.abs(s.balance):s.balance),s.balance<0?'এই মাসের Due':'এই মাসের Advance', s.balance<0?'c-danger':'c-success'],
+    [money(s.balance<0?Math.abs(s.balance):s.balance),s.balance<0?'এই মাসের Meal Due':'এই মাসের Meal Advance', s.balance<0?'c-danger':'c-success'],
     [totalMeals.toFixed(1).replace(/\.0$/,''),'সর্বমোট Meal (all-time)','c-primary'],
-    [money(totalDep),'সর্বমোট Deposit (all-time)','c-success'],
+    [money(totalDep),'সর্বমোট Meal Deposit (all-time)','c-success'],
+    [money(os.balance<0?Math.abs(os.balance):os.balance),os.balance<0?'Other Fund Due':'Other Fund Advance',os.balance<0?'c-danger':'c-success'],
     [m.status,'বর্তমান Status','c-accent']
   ].map(([v,l,c])=>`<div class="card stat ${c}" style="padding:12px"><div class="lab">${l}</div><div class="val" style="font-size:16px">${v}</div></div>`).join('');
   const meals=[...STATE.mealEntries].filter(e=>e.mid===id).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10);
@@ -507,13 +734,16 @@ function loadMealGrid(){
   lab.textContent=mealSelDate===todayISO()?'আজ · '+fmtDate(mealSelDate):fmtDate(mealSelDate);
   document.getElementById('meal-quickfill').style.display=isAdmin?'':'none';
   document.getElementById('save-meal-grid').style.display=isAdmin?'':'none';
-  // Only members who had already joined on/before the selected date are eligible —
+  // Only members who had already joined on/before the selected date, and who
+  // aren't on a manager-marked inactive period covering this date, are eligible —
   // e.g. Arafat joined on the 8th, so no meal can be logged for him before the 8th.
   const allActive=STATE.members.filter(m=>m.status==='Active');
-  const eligible=allActive.filter(m=>!m.joined||m.joined<=mealSelDate);
+  const eligible=allActive.filter(m=>(!m.joined||m.joined<=mealSelDate)&&!isInactiveOn(m,mealSelDate));
   const notYetJoined=allActive.filter(m=>m.joined&&m.joined>mealSelDate);
+  const inactiveNow=allActive.filter(m=>isInactiveOn(m,mealSelDate));
   const grid=document.getElementById('meal-grid');
   let noticeHtml=notYetJoined.length?`<div class="ibox warn" style="margin-bottom:10px">${ICONS.INFO}<div>${notYetJoined.map(m=>escapeHtml(m.name)+' ('+fmtDate(m.joined)+' থেকে যোগ)').join(', ')} — এই তারিখে এখনো মেসে যোগ দেননি, তাই মিল যোগ করা যাচ্ছে না।</div></div>`:'';
+  if(inactiveNow.length)noticeHtml+=`<div class="ibox warn" style="margin-bottom:10px">${ICONS.INFO}<div>${inactiveNow.map(m=>escapeHtml(m.name)+' ('+fmtDate(m.inactiveFrom)+' – '+fmtDate(m.inactiveTo)+' পর্যন্ত Inactive)').join(', ')} — এই তারিখে Inactive হিসেবে চিহ্নিত, তাই মিল যোগ করা যাচ্ছে না।</div></div>`;
   if(!isAdmin){
     grid.innerHTML=noticeHtml+eligible.map(m=>{
       const ex=STATE.mealEntries.find(e=>e.mid===m.id&&e.date===mealSelDate);
@@ -544,34 +774,26 @@ function toggleGuestInput(mid){
   if(!cb.checked)document.getElementById('mgg-'+mid).value='';
 }
 function quickFillMeals(val){
-  STATE.members.filter(m=>m.status==='Active'&&(!m.joined||m.joined<=mealSelDate)).forEach(m=>{
+  STATE.members.filter(m=>m.status==='Active'&&(!m.joined||m.joined<=mealSelDate)&&!isInactiveOn(m,mealSelDate)).forEach(m=>{
     const el=document.getElementById('mg-'+m.id); if(el)el.value=val;
   });
   toast(val>0?'সবাইকে '+val+' Meal দেওয়া হয়েছে':'সবাইকে Off দেওয়া হয়েছে','ok');
 }
 async function saveMealGrid(){
   if(!requireAdmin())return;
-  // Only members already joined on/before this date are eligible to save (matches loadMealGrid)
-  const members=STATE.members.filter(m=>m.status==='Active'&&(!m.joined||m.joined<=mealSelDate));
+  // Only members already joined on/before this date, and not on an inactive
+  // period covering this date, are eligible to save (matches loadMealGrid)
+  const members=STATE.members.filter(m=>m.status==='Active'&&(!m.joined||m.joined<=mealSelDate)&&!isInactiveOn(m,mealSelDate));
   if(!members.length){toast('কোনো eligible Active member নেই','er');return;}
   setBusy('save-meal-grid',true);
-  // Compute the next ME- number ONCE and increment it across the whole batch —
-  // calling genId() separately per member inside the loop was the bug: every
-  // brand-new row got the SAME "next" id (since STATE.mealEntries hadn't grown
-  // yet), so inserting 2+ new entries in one Save hit the primary-key unique
-  // constraint on `id`. Meal *values* being equal was never the actual cause.
-  const existingNums=STATE.mealEntries.map(e=>parseInt(String(e.id).replace('ME-',''))||0);
-  let nextNum=Math.max(0,...existingNums,0)+1;
   const rows=members.map(m=>{
     const meals=N(document.getElementById('mg-'+m.id).value);
     const guest=N(document.getElementById('mgg-'+m.id).value);
     const idx=STATE.mealEntries.findIndex(e=>e.mid===m.id&&e.date===mealSelDate);
-    let id;
-    if(idx>=0){ id=STATE.mealEntries[idx].id; }
-    else { id='ME-'+String(nextNum).padStart(4,'0'); nextNum++; }
+    const id=idx>=0?STATE.mealEntries[idx].id:genId('ME-');
     return {id, date:mealSelDate, mid:m.id, name:m.name, meals, guest, notes:''};
   });
-  const dbRows=rows.map(r=>({id:r.id,date:r.date,member_id:r.mid,member_name:r.name,meals:r.meals,guest:r.guest,notes:r.notes}));
+  const dbRows=rows.map(r=>({id:r.id,mess_id:currentMessId,date:r.date,member_id:r.mid,member_name:r.name,meals:r.meals,guest:r.guest,notes:r.notes}));
   const ok=await dbOp(supa.from('meal_entries').upsert(dbRows,{onConflict:'member_id,date'}),'মিল এন্ট্রি সেভ করা যায়নি');
   setBusy('save-meal-grid',false,ICONS.CHECK+'সবার এন্ট্রি Save করুন');
   if(ok){
@@ -593,7 +815,7 @@ function renderMealRecent(){
 }
 async function delMealEntry(id){
   if(!requireAdmin())return; if(!confirm('এই entry ডিলিট করবেন?'))return;
-  const ok=await dbOp(supa.from('meal_entries').delete().eq('id',id),'ডিলিট করা যায়নি');
+  const ok=await dbOp(supa.from('meal_entries').delete().eq('id',id).eq('mess_id',currentMessId),'ডিলিট করা যায়নি');
   if(ok){ STATE.mealEntries=STATE.mealEntries.filter(e=>e.id!==id); persist('ডিলিট হয়েছে'); }
 }
 
@@ -667,6 +889,32 @@ function addBazarItem(){
   renderBazarItems();
 }
 function removeBazarItem(i){ bazarItems.splice(i,1); renderBazarItems(); }
+// ── Paste a whole bazar list at once (one item per line, price at the end
+// of each line) and auto-split it into items — e.g.:
+//   চাল ২ কেজি ১২০
+//   ডাল ৫০
+//   তেল - ৩৫০ টাকা
+// Lines that don't end with a recognizable number are skipped and reported,
+// so the manager can add those by hand.
+function parseBazarPasteList(){
+  const box=document.getElementById('bz-paste'); if(!box)return;
+  const text=box.value;
+  const lines=text.split('\n').map(l=>l.trim()).filter(Boolean);
+  if(!lines.length){toast('আগে লিস্ট পেস্ট করুন','er');return;}
+  let added=0, skipped=[];
+  lines.forEach(line=>{
+    const m=line.match(/^(.*?)[\s:.,\-–—৳]*(\d+(?:[.,]\d+)?)\s*(টাকা|taka|tk|৳)?\.?$/i);
+    if(!m||!m[1].trim()||!m[2]){ skipped.push(line); return; }
+    const name=m[1].trim().replace(/[-–—:.,]+$/,'').trim();
+    const amt=parseFloat(m[2].replace(',','.'));
+    if(!name||!amt||amt<=0){ skipped.push(line); return; }
+    bazarItems.push({name,amt}); added++;
+  });
+  renderBazarItems();
+  box.value='';
+  if(added)toast(`${added}টা আইটেম যোগ হয়েছে${skipped.length?', '+skipped.length+'টা লাইন বোঝা যায়নি':''}`,'ok');
+  else toast('কোনো লাইন থেকে আইটেম বোঝা যায়নি — শেষে দাম আছে কিনা দেখুন','er');
+}
 function renderBazarItems(){
   document.getElementById('bzitem-list').innerHTML=bazarItems.map((it,i)=>
     `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px">
@@ -688,14 +936,14 @@ async function saveBazar(){
   const by=bySel==='__other__'?document.getElementById('bzby-other').value.trim():bySel;
   if(!by){toast('কে বাজার করেছে বাছুন বা নাম লিখুন','er');return;}
   setBusy('save-bz',true);
-  const rec={id:genId(STATE.bazarExp,'BZ-'),date:document.getElementById('bzd').value,by,amount:amt,notes:document.getElementById('bznote').value.trim()};
-  const ok=await dbOp(supa.from('bazar_expenses').insert({id:rec.id,date:rec.date,bought_by:rec.by,amount:rec.amount,notes:rec.notes}),'Bazar expense যোগ করা যায়নি');
+  const rec={id:genId('BZ-'),date:document.getElementById('bzd').value,by,amount:amt,notes:document.getElementById('bznote').value.trim()};
+  const ok=await dbOp(supa.from('bazar_expenses').insert({id:rec.id,mess_id:currentMessId,date:rec.date,bought_by:rec.by,amount:rec.amount,notes:rec.notes}),'Bazar expense যোগ করা যায়নি');
   setBusy('save-bz',false,ICONS.CHECK+'Save');
   if(ok){ STATE.bazarExp.push(rec); closeM('ov-bazar'); persist('Bazar expense যোগ হয়েছে'); }
 }
 async function delBazar(id){
   if(!requireAdmin())return; if(!confirm('ডিলিট করবেন?'))return;
-  const ok=await dbOp(supa.from('bazar_expenses').delete().eq('id',id),'ডিলিট করা যায়নি');
+  const ok=await dbOp(supa.from('bazar_expenses').delete().eq('id',id).eq('mess_id',currentMessId),'ডিলিট করা যায়নি');
   if(ok){ STATE.bazarExp=STATE.bazarExp.filter(e=>e.id!==id); persist('ডিলিট হয়েছে'); }
 }
 
@@ -703,6 +951,7 @@ async function delBazar(id){
    OTHER EXPENSES
    ═══════════════════════════════════════════════════════════ */
 function renderOther(){
+  const addBtn=document.getElementById('ot-dep-add-btn'); if(addBtn)addBtn.style.display=isAdmin?'':'none';
   const mon=document.getElementById('ot-mon-f').value,yr=N(document.getElementById('ot-yr-f').value);
   let list=STATE.otherExp;
   if(mon)list=list.filter(e=>{const d=new Date(e.date+'T00:00:00');return MONTHS[d.getMonth()]===mon;});
@@ -717,6 +966,45 @@ function renderOther(){
     <td data-label="Amount" class="num" style="color:var(--accent);font-weight:700">${money(e.amount)}</td>
     <td data-label="Notes" style="color:var(--muted)">${escapeHtml(e.notes)}</td>
     <td data-label="">${isAdmin?`<button class="btn icon ghost sm" onclick="delOther('${e.id}')">${ICONS.TRASH}</button>`:''}</td></tr>`).join('')||emptyRow(5,'কোনো other expense নেই');
+
+  // ── Other Fund টাকা কালেকশন — মিলের হিসাব থেকে সম্পূর্ণ আলাদা ──
+  const mon2=document.getElementById('ot-dep-mon-f')?document.getElementById('ot-dep-mon-f').value:'', yr2=document.getElementById('ot-dep-yr-f')?N(document.getElementById('ot-dep-yr-f').value):0;
+  let depList=STATE.deposits.filter(p=>p.type==='Other');
+  if(mon2)depList=depList.filter(p=>{const d=new Date(p.date+'T00:00:00');return MONTHS[d.getMonth()]===mon2;});
+  if(yr2)depList=depList.filter(p=>{const d=new Date(p.date+'T00:00:00');return d.getFullYear()===yr2;});
+  const depTotal=depList.reduce((a,p)=>a+N(p.amount),0);
+  const fundBody=document.getElementById('ot-dep-body');
+  if(fundBody){
+    document.getElementById('ot-fund-cards').innerHTML=
+      `<div class="card stat c-success"><div class="ic">${ICONS.CASH}</div><div class="lab">Total Other Fund Deposit (filtered)</div><div class="val">${money(depTotal)}</div></div>
+       <div class="card stat ${depTotal-total>=0?'c-success':'c-danger'}"><div class="ic">${ICONS.ALERT}</div><div class="lab">Overall Balance (Deposit − Expense, filtered)</div><div class="val">${money(Math.abs(depTotal-total))} ${depTotal-total<0?'(Due)':''}</div></div>`;
+    fundBody.innerHTML=[...depList].sort((a,b)=>b.date.localeCompare(a.date)).map(p=>`<tr>
+      <td data-label="Date">${fmtDate(p.date)}</td><td data-label="Member" style="font-weight:600">${escapeHtml(p.name)}</td>
+      <td data-label="Amount" class="num" style="color:var(--success);font-weight:700">${money(p.amount)}</td>
+      <td data-label="Notes" style="color:var(--muted)">${escapeHtml(p.notes)}</td>
+      <td data-label="">${isAdmin?`<button class="btn icon ghost sm" onclick="delDeposit('${p.id}')">${ICONS.TRASH}</button>`:''}</td></tr>`).join('')||emptyRow(5,'কোনো Other Fund deposit নেই');
+    const mon3=document.getElementById('sm-mon')?document.getElementById('sm-mon').value:curMon(), yr3=document.getElementById('sm-yr')?N(document.getElementById('sm-yr').value):curYr();
+    const memberBody=document.getElementById('ot-member-body');
+    if(memberBody){
+      memberBody.innerHTML=STATE.members.filter(m=>m.status!=='Left').map(m=>{
+        const os=otherFundSummary(m.id,mon3,yr3);
+        return `<tr><td data-label="Member" style="font-weight:600">${escapeHtml(m.name)}</td>
+          <td data-label="Share" class="num">${money(os.otherShare)}</td>
+          <td data-label="Deposit" class="num" style="color:var(--success)">${money(os.deposits)}</td>
+          <td data-label="Balance" class="num" style="font-weight:700;color:${os.balance<0?'var(--danger)':'var(--success)'}">${money(Math.abs(os.balance))}</td>
+          <td data-label="Status">${badge(os.status)}</td></tr>`;
+      }).join('')||emptyRow(5,'কোনো member নেই');
+    }
+  }
+}
+function openOtherDepositModal(){
+  if(!requireAdmin())return;
+  depModalType='Other';
+  populateMemberSelects();
+  document.getElementById('dep-modal-title').textContent='Add Deposit (Other Expense Fund)';
+  document.getElementById('depd').value=todayISO();document.getElementById('dep-member').value='';
+  document.getElementById('depamt').value='';document.getElementById('depnote').value='';document.getElementById('depmeth').value='Cash';
+  setBusy('save-dep',false,ICONS.CHECK+'Save');openM('ov-deposit');
 }
 function openOtherModal(){
   document.getElementById('otd').value=todayISO();document.getElementById('ottitle').value='';document.getElementById('otamt').value='';document.getElementById('otnote').value='';
@@ -728,23 +1016,27 @@ async function saveOther(){
   if(!title){toast('Title দিন','er');return;}
   if(amt<=0){toast('Amount দিন','er');return;}
   setBusy('save-ot',true);
-  const rec={id:genId(STATE.otherExp,'OE-'),date:document.getElementById('otd').value,title,amount:amt,notes:document.getElementById('otnote').value.trim()};
-  const ok=await dbOp(supa.from('other_expenses').insert(rec),'Other expense যোগ করা যায়নি');
+  const rec={id:genId('OE-'),date:document.getElementById('otd').value,title,amount:amt,notes:document.getElementById('otnote').value.trim()};
+  const ok=await dbOp(supa.from('other_expenses').insert({...rec,mess_id:currentMessId}),'Other expense যোগ করা যায়নি');
   setBusy('save-ot',false,ICONS.CHECK+'Save');
   if(ok){ STATE.otherExp.push(rec); closeM('ov-other'); persist('Other expense যোগ হয়েছে'); }
 }
 async function delOther(id){
   if(!requireAdmin())return; if(!confirm('ডিলিট করবেন?'))return;
-  const ok=await dbOp(supa.from('other_expenses').delete().eq('id',id),'ডিলিট করা যায়নি');
+  const ok=await dbOp(supa.from('other_expenses').delete().eq('id',id).eq('mess_id',currentMessId),'ডিলিট করা যায়নি');
   if(ok){ STATE.otherExp=STATE.otherExp.filter(e=>e.id!==id); persist('ডিলিট হয়েছে'); }
 }
 
 /* ═══════════════════════════════════════════════════════════
-   DEPOSITS
+   DEPOSITS — "Meal" fund (মিলের টাকা) vs "Other" fund (Other Expense-এর
+   টাকা) সম্পূর্ণ আলাদা হিসাব রাখে। মূল Deposits পেজ Meal fund দেখায়;
+   Other Expenses পেজের ভেতরে তার নিজস্ব deposit list/add button আছে
+   (openOtherDepositModal), যেটা Other fund-এর deposit যোগ করে।
    ═══════════════════════════════════════════════════════════ */
+let depModalType='Meal'; // which fund the currently-open deposit modal will save into
 function renderDeposits(){
   const mon=document.getElementById('dep-mon-f').value,yr=N(document.getElementById('dep-yr-f').value);
-  let list=STATE.deposits;
+  let list=STATE.deposits.filter(p=>(p.type||'Meal')==='Meal');
   if(mon)list=list.filter(p=>{const d=new Date(p.date+'T00:00:00');return MONTHS[d.getMonth()]===mon;});
   if(yr)list=list.filter(p=>{const d=new Date(p.date+'T00:00:00');return d.getFullYear()===yr;});
   const total=list.reduce((a,p)=>a+N(p.amount),0);
@@ -758,7 +1050,9 @@ function renderDeposits(){
     <td data-label="">${isAdmin?`<button class="btn icon ghost sm" onclick="delDeposit('${p.id}')">${ICONS.TRASH}</button>`:''}</td></tr>`).join('')||emptyRow(6,'কোনো deposit নেই');
 }
 function openDepositModal(){
+  depModalType='Meal';
   populateMemberSelects();
+  document.getElementById('dep-modal-title').textContent='Add Deposit (Meal Fund)';
   document.getElementById('depd').value=todayISO();document.getElementById('dep-member').value='';
   document.getElementById('depamt').value='';document.getElementById('depnote').value='';document.getElementById('depmeth').value='Cash';
   setBusy('save-dep',false,ICONS.CHECK+'Save');openM('ov-deposit');
@@ -766,20 +1060,20 @@ function openDepositModal(){
 async function saveDeposit(){
   if(!requireAdmin())return;
   const mid=document.getElementById('dep-member').value, amtRaw=document.getElementById('depamt').value.trim();
-  if(!mid){toast(' Slect Member','er');return;}
+  if(!mid){toast('Select Member','er');return;}
   if(amtRaw===''||isNaN(Number(amtRaw))){toast('একটা সঠিক Amount দিন','er');return;}
   const amt=Number(amtRaw);
   const member=STATE.members.find(m=>m.id===mid);
   setBusy('save-dep',true);
-  const rec={id:genId(STATE.deposits,'DEP-'),date:document.getElementById('depd').value,mid,name:member.name,amount:amt,method:document.getElementById('depmeth').value,notes:document.getElementById('depnote').value.trim()};
-  const ok=await dbOp(supa.from('deposits').insert({id:rec.id,date:rec.date,member_id:rec.mid,member_name:rec.name,amount:rec.amount,method:rec.method,notes:rec.notes}),'Deposit যোগ করা যায়নি');
+  const rec={id:genId('DEP-'),date:document.getElementById('depd').value,mid,name:member.name,amount:amt,method:document.getElementById('depmeth').value,type:depModalType,notes:document.getElementById('depnote').value.trim()};
+  const ok=await dbOp(supa.from('deposits').insert({id:rec.id,mess_id:currentMessId,date:rec.date,member_id:rec.mid,member_name:rec.name,amount:rec.amount,method:rec.method,type:rec.type,notes:rec.notes}),'Deposit যোগ করা যায়নি');
   setBusy('save-dep',false,ICONS.CHECK+'Save');
-  if(ok){ STATE.deposits.push(rec); closeM('ov-deposit'); persist('Deposit যোগ হয়েছে'); }
+  if(ok){ STATE.deposits.push(rec); closeM('ov-deposit'); persist('Deposit যোগ হয়েছে'); renderPage(curPage); }
 }
 async function delDeposit(id){
   if(!requireAdmin())return; if(!confirm('ডিলিট করবেন?'))return;
-  const ok=await dbOp(supa.from('deposits').delete().eq('id',id),'ডিলিট করা যায়নি');
-  if(ok){ STATE.deposits=STATE.deposits.filter(p=>p.id!==id); persist('ডিলিট হয়েছে'); }
+  const ok=await dbOp(supa.from('deposits').delete().eq('id',id).eq('mess_id',currentMessId),'ডিলিট করা যায়নি');
+  if(ok){ STATE.deposits=STATE.deposits.filter(p=>p.id!==id); persist('ডিলিট হয়েছে'); renderPage(curPage); }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -791,7 +1085,7 @@ function renderSummary(){
   const otherTotal=otherExpenseFor(mon,yr);
   document.getElementById('sm-cards').innerHTML=[
     [ICONS.CART,money(bazar),'Total Bazar','c-danger'],[ICONS.MEAL,String(meals.toFixed(1)).replace(/\.0$/,''),'Total Meals','c-primary'],
-    [ICONS.CHART,money(rate.toFixed(2)),'Meal Rate','c-info'],[ICONS.RECEIPT,money(otherTotal),'Other Expenses','c-accent']
+    [ICONS.CHART,money(rate.toFixed(2)),'Meal Rate','c-info'],[ICONS.RECEIPT,money(otherTotal),'Other Expenses (দেখুন Other Expenses পেজে)','c-accent']
   ].map(([ic,v,l,c])=>`<div class="card stat ${c}"><div class="ic">${ic}</div><div class="lab">${l}</div><div class="val">${v}</div></div>`).join('');
   const mgr=managerFor(mon,yr);
   document.getElementById('sm-manager').innerHTML=`${ICONS.CROWN}<div style="flex:1">এই মাসের Manager: <b>${mgr?escapeHtml(mgr.name):'এখনো ঠিক করা হয়নি'}</b></div>${isAdmin?`<button class="btn sm primary" onclick="openManagerModal()">${mgr?'Change':'Assign'}</button>`:''}`;
@@ -801,11 +1095,10 @@ function renderSummary(){
     return `<tr><td data-label="Member" style="font-weight:600">${escapeHtml(m.name)}</td>
       <td data-label="Meals" class="num">${(s.meals+s.guest).toFixed(1).replace(/\.0$/,'')}</td>
       <td data-label="Meal Cost" class="num" style="font-weight:700">${money(s.mealCost)}</td>
-      <td data-label="Other Share" class="num">${money(s.otherShare)}</td>
-      <td data-label="Deposits" class="num" style="color:var(--success)">${money(s.deposits)}</td>
+      <td data-label="Deposits (Meal)" class="num" style="color:var(--success)">${money(s.deposits)}</td>
       <td data-label="Balance" class="num" style="font-weight:700;color:${s.balance<0?'var(--danger)':'var(--success)'}">${money(Math.abs(s.balance))}</td>
       <td data-label="Status">${badge(s.status)}</td></tr>`;
-  }).join('')||emptyRow(7,'কোনো member নেই');
+  }).join('')||emptyRow(6,'কোনো member নেই');
 }
 function openManagerModal(){
   populateMemberSelects();
@@ -823,7 +1116,7 @@ async function saveManager(){
   const month=document.getElementById('mgr-mon').value, year=document.getElementById('mgr-yr').value;
   const key=month+'-'+year;
   setBusy('save-mgr',true);
-  const ok=await dbOp(supa.from('managers').upsert({month_year:key,member_id:mid,member_name:member.name},{onConflict:'month_year'}),'Manager assign করা যায়নি');
+  const ok=await dbOp(supa.from('managers').upsert({mess_id:currentMessId,month_year:key,member_id:mid,member_name:member.name},{onConflict:'mess_id,month_year'}),'Manager assign করা যায়নি');
   setBusy('save-mgr',false,ICONS.CHECK+'Save');
   if(ok){
     const idx=STATE.managers.findIndex(x=>x.monthYear===key);
@@ -840,10 +1133,10 @@ async function saveManager(){
 }
 function exportSummaryCSV(){
   const mon=document.getElementById('sm-mon').value,yr=N(document.getElementById('sm-yr').value);
-  const rows=[['Member','Meals','Meal Cost','Other Share','Deposits','Balance','Status']];
+  const rows=[['Member','Meals','Meal Cost','Deposits (Meal)','Balance','Status']];
   STATE.members.filter(m=>m.status!=='Left').forEach(m=>{
     const s=memberSummary(m.id,mon,yr);
-    rows.push([m.name,(s.meals+s.guest).toFixed(1),s.mealCost,s.otherShare,s.deposits,s.balance,s.status]);
+    rows.push([m.name,(s.meals+s.guest).toFixed(1),s.mealCost,s.deposits,s.balance,s.status]);
   });
   const csv=rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
   downloadBlob(csv,`summary-${mon}-${yr}.csv`,'text/csv');
@@ -882,7 +1175,7 @@ function checkCarryForwardDue(){
   const hadActivity=bazar>0||meals>0;
   if(!hadActivity||isCarryForwardApplied(month,year)){ banner.innerHTML=''; return; }
   banner.innerHTML=`<div class="ibox warn" style="margin-bottom:16px;align-items:center">${ICONS.ALERT}
-    <div style="flex:1"><b>${month} ${year}</b>-এর ব্যালেন্স এখনো পরের মাসে carry forward করা হয়নি।</div>
+    <div style="flex:1"><b>${month} ${year}</b>-এর Meal Fund ব্যালেন্স এখনো পরের মাসে carry forward করা হয়নি।</div>
     <button class="btn sm primary" onclick="doCarryForward('${month}',${year})">Carry Forward করুন</button></div>`;
 }
 async function doCarryForward(month,year){
@@ -891,17 +1184,14 @@ async function doCarryForward(month,year){
   const targetDate=nextMonthFirstDate(month,year);
   const members=STATE.members.filter(m=>m.status!=='Left');
   const marker=cfMarker(month,year);
-  const existingNums=STATE.deposits.map(p=>parseInt(String(p.id).replace('DEP-',''))||0);
-  let nextNum=Math.max(0,...existingNums,0)+1;
   const rows=[];
   members.forEach(m=>{
     const bal=memberSummary(m.id,month,year).balance;
     if(Math.round(bal)===0)return;
-    const id='DEP-'+String(nextNum).padStart(3,'0'); nextNum++;
-    rows.push({id,date:targetDate,mid:m.id,name:m.name,amount:Math.round(bal),method:'Carry Forward',notes:`গত মাসের ব্যালেন্স স্থানান্তর ${marker}`});
+    rows.push({id:genId('DEP-'),date:targetDate,mid:m.id,name:m.name,amount:Math.round(bal),method:'Carry Forward',type:'Meal',notes:`গত মাসের ব্যালেন্স স্থানান্তর ${marker}`});
   });
   if(!rows.length){ toast('কারো ব্যালেন্স নেই, কিছু করার দরকার নেই','ok'); return; }
-  const dbRows=rows.map(r=>({id:r.id,date:r.date,member_id:r.mid,member_name:r.name,amount:r.amount,method:r.method,notes:r.notes}));
+  const dbRows=rows.map(r=>({id:r.id,mess_id:currentMessId,date:r.date,member_id:r.mid,member_name:r.name,amount:r.amount,method:r.method,type:r.type,notes:r.notes}));
   const ok=await dbOp(supa.from('deposits').insert(dbRows),'Carry forward করা যায়নি');
   if(ok){ STATE.deposits.push(...rows); persist(`${month} ${year}-এর ব্যালেন্স carry forward হয়েছে`); }
 }
@@ -918,7 +1208,7 @@ function renderSettings(){
 async function saveMessInfo(){
   if(!requireSuperAdmin())return;
   const name=document.getElementById('set-messname').value.trim()||'My Mess';
-  const ok=await dbOp(supa.from('settings').update({mess_name:name}).eq('id',1),'Save করা যায়নি');
+  const ok=await dbOp(supa.from('messes').update({name}).eq('id',currentMessId),'Save করা যায়নি');
   if(ok){ STATE.settings.messName=name; document.getElementById('sb-messname').textContent=name; persist('Save হয়েছে'); }
 }
 function downloadBlob(content,filename,mime){

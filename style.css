@@ -110,6 +110,8 @@ input[type=checkbox]{width:18px;height:18px;accent-color:var(--primary);cursor:p
 [data-theme="dark"] .sb-item.on{color:var(--primary)}
 .sb-item.on svg{opacity:1}
 .sb-foot{padding:14px 16px;border-top:1px solid var(--border)}
+#sb-whoami svg{width:15px;height:15px;flex-shrink:0}
+.sb-foot .btn.block{margin-top:6px}
 .main{flex:1;min-width:0;margin-left:var(--sbw);display:flex;flex-direction:column}
 .topbar{position:sticky;top:0;z-index:40;display:flex;align-items:center;justify-content:space-between;
   gap:10px;padding:14px 22px;background:var(--bg);background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);
