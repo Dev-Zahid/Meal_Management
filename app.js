@@ -303,7 +303,7 @@ function populateMemberSelects(){
   ['dep-member','mgr-member'].forEach(id=>{
     const el=document.getElementById(id); if(!el)return;
     const prev=el.value;
-    el.innerHTML='<option value="">-- Member বাছুন --</option>'+active.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
+    el.innerHTML='<option value="">-- Select Member --</option>'+active.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
     if(active.find(m=>m.id===prev))el.value=prev;
   });
   const bzby=document.getElementById('bzby');
@@ -766,7 +766,7 @@ function openDepositModal(){
 async function saveDeposit(){
   if(!requireAdmin())return;
   const mid=document.getElementById('dep-member').value, amtRaw=document.getElementById('depamt').value.trim();
-  if(!mid){toast('Member বাছুন','er');return;}
+  if(!mid){toast(' Slect Member','er');return;}
   if(amtRaw===''||isNaN(Number(amtRaw))){toast('একটা সঠিক Amount দিন','er');return;}
   const amt=Number(amtRaw);
   const member=STATE.members.find(m=>m.id===mid);
@@ -818,7 +818,7 @@ function openManagerModal(){
 async function saveManager(){
   if(!requireAdmin())return;
   const mid=document.getElementById('mgr-member').value;
-  if(!mid){toast('Member বাছুন','er');return;}
+  if(!mid){toast('Select Member','er');return;}
   const member=STATE.members.find(m=>m.id===mid);
   const month=document.getElementById('mgr-mon').value, year=document.getElementById('mgr-yr').value;
   const key=month+'-'+year;

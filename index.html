@@ -157,8 +157,8 @@
             </div>
             <input type="date" id="me-date" onchange="loadMealGrid()" style="margin-bottom:14px">
             <div style="display:flex;gap:8px;margin-bottom:12px" id="meal-quickfill">
+              <button class="btn sm" onclick="quickFillMeals(2)">সবাইকে ১ Meal দিন</button>
               <button class="btn sm" onclick="quickFillMeals(2)">সবাইকে ২ Meal দিন</button>
-              <button class="btn sm" onclick="quickFillMeals(0)">সবাইকে Off দিন</button>
             </div>
             <div id="meal-grid"></div>
             <button class="btn primary block" id="save-meal-grid" onclick="saveMealGrid()" style="margin-top:6px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>সবার এন্ট্রি Save করুন</button>
@@ -181,7 +181,7 @@
       <section class="page" data-page="bazar">
         <div class="fbar">
           <label>Month:</label>
-          <select id="bz-mon-f" onchange="renderBazar()"><option value="">সব</option></select>
+          <select id="bz-mon-f" onchange="renderBazar()"><option value="">All</option></select>
           <input type="number" id="bz-yr-f" placeholder="Year" style="width:90px" onchange="renderBazar()">
         </div>
         <div class="grid cols-2" id="bz-cards" style="margin-bottom:14px"></div>
@@ -196,7 +196,7 @@
         <div class="ibox info" style="margin-bottom:14px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="10.6" x2="12" y2="16.2"/><circle cx="12" cy="7.5" r=".7" fill="currentColor" stroke="none"/></svg><div>Bazar ছাড়া অন্য যেকোনো খরচ (গ্যাস, সিলিন্ডার, পরিষ্কার-কর্মী, ওয়াইফাই...) এখানে যোগ করুন — মাস শেষে এটা সব Active member-এর মধ্যে সমান ভাগ হয়ে Monthly Summary-তে যোগ হবে।</div></div>
         <div class="fbar">
           <label>Month:</label>
-          <select id="ot-mon-f" onchange="renderOther()"><option value="">সব</option></select>
+          <select id="ot-mon-f" onchange="renderOther()"><option value="">All</option></select>
           <input type="number" id="ot-yr-f" placeholder="Year" style="width:90px" onchange="renderOther()">
         </div>
         <div class="grid cols-2" id="ot-cards" style="margin-bottom:14px"></div>
@@ -210,7 +210,7 @@
       <section class="page" data-page="deposits">
         <div class="fbar">
           <label>Month:</label>
-          <select id="dep-mon-f" onchange="renderDeposits()"><option value="">সব</option></select>
+          <select id="dep-mon-f" onchange="renderDeposits()"><option value="">All</option></select>
           <input type="number" id="dep-yr-f" placeholder="Year" style="width:90px" onchange="renderDeposits()">
         </div>
         <div class="grid cols-2" id="dep-cards" style="margin-bottom:14px"></div>
