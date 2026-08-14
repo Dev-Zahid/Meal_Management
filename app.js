@@ -66,7 +66,8 @@ function openM(id){document.getElementById(id).classList.add('on');}
 function closeM(id){document.getElementById(id).classList.remove('on');}
 function setBusy(id,busy,html){const b=document.getElementById(id);if(!b)return;b.disabled=busy;if(busy){b.dataset.orig=b.innerHTML;b.innerHTML='<span class="spin"></span>';}else{b.innerHTML=html!==undefined?html:(b.dataset.orig||b.innerHTML);}}
 function badge(status){const map={Active:'gn',Inactive:'am',Left:'gy',Settled:'gn',Due:'rd',Advance:'bl'};return `<span class="badge ${map[status]||'gy'}">${status}</span>`;}
-function requireAdmin(){ if(!isAdmin){ toast('শুধু Manager এটা করতে পারবেন','er'); return false; } return true; }
+function requireAdmin(){ if(!isAdmin){ toast('শুধু Owner বা এই মাসের Manager এটা করতে পারবেন','er'); return false; } return true; }
+function requireSuperAdmin(){ if(!isSuperAdmin){ toast('শুধু Owner (Super Admin) এটা করতে পারবেন','er'); return false; } return true; }
 function initials(name){return (name||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase();}
 const AV_COLORS=['#1F6F54','#DD9E33','#2E7B79','#C6553D','#6E5DA6','#3C7DBF','#B4652F','#4E8B3B'];
 function avatarColor(id){let h=0;for(let i=0;i<id.length;i++)h=(h*31+id.charCodeAt(i))>>>0;return AV_COLORS[h%AV_COLORS.length];}
@@ -82,7 +83,7 @@ function inMonth(dateStr,month,year){const d=new Date(dateStr+'T00:00:00');retur
 /* ═══════════════════════════════════════════════════════════
    SUPABASE DATA LAYER
    ═══════════════════════════════════════════════════════════ */
-function emptySettings(){ return {messName:'',adminPin:'',viewerPin:'',theme:'light',setupDone:false}; }
+function emptySettings(){ return {messName:'',theme:'light',setupDone:false,ownerMemberId:''}; }
 let STATE=null;
 
 async function loadState(){
@@ -99,10 +100,10 @@ async function loadState(){
   if(firstErr){ toast('Database connect করা যায়নি: '+firstErr.error.message,'er'); return null; }
   return {
     settings: s.data ? {
-      messName:s.data.mess_name||'', adminPin:s.data.admin_pin||'', viewerPin:s.data.viewer_pin||'',
-      theme:s.data.theme||'light', setupDone:!!s.data.setup_done
+      messName:s.data.mess_name||'', theme:s.data.theme||'light',
+      setupDone:!!s.data.setup_done, ownerMemberId:s.data.owner_member_id||''
     } : emptySettings(),
-    members:(mem.data||[]).map(r=>({id:r.id,name:r.name,phone:r.phone||'',status:r.status,joined:r.joined||'',left:r.left_date||'',notes:r.notes||''})),
+    members:(mem.data||[]).map(r=>({id:r.id,name:r.name,phone:r.phone||'',passwordHash:r.password_hash||'',status:r.status,joined:r.joined||'',left:r.left_date||'',notes:r.notes||''})),
     mealEntries:(meals.data||[]).map(r=>({id:r.id,date:r.date,mid:r.member_id,name:r.member_name,meals:Number(r.meals),guest:Number(r.guest),notes:r.notes||''})),
     bazarExp:(bazar.data||[]).map(r=>({id:r.id,date:r.date,by:r.bought_by||'',amount:Number(r.amount),notes:r.notes||''})),
     otherExp:(other.data||[]).map(r=>({id:r.id,date:r.date,title:r.title,amount:Number(r.amount),notes:r.notes||''})),
@@ -123,10 +124,23 @@ function persist(msg){ if(msg)toast(msg,'ok'); refreshAll(); return true; }
    BOOT
    ═══════════════════════════════════════════════════════════ */
 let curPage='dashboard', mFilterStatus='All', mSearch='', editMemberId=null, mealSelDate=todayISO();
-let isAdmin=true; // set at login — Manager PIN → true (full access), Viewer PIN → false (read-only)
+let isAdmin=false;        // isSuperAdmin || isMonthManager — edit rights across data pages
+let isSuperAdmin=false;   // the Owner account created at setup — only role that can touch Settings
+let isMonthManager=false; // whoever is assigned Manager for the CURRENT month
+let currentMember=null;   // the logged-in member's row
+
+// Simple client-side password hashing (SHA-256 + a fixed app salt). This is
+// NOT the same as proper server-side bcrypt/Argon2 hashing, but it means
+// passwords are never stored or compared in plain text.
+async function hashPassword(pw){
+  const enc=new TextEncoder().encode('meskhata_v1::'+pw);
+  const buf=await crypto.subtle.digest('SHA-256',enc);
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
 
 window.addEventListener('load', boot);
 async function boot(){
+  registerServiceWorker();
   if(SUPABASE_URL.includes('YOUR-PROJECT')){
     document.body.innerHTML='<div style="max-width:520px;margin:80px auto;font-family:sans-serif;line-height:1.6;padding:0 20px">'+
       '<h2>⚠️ Supabase কনফিগার করা হয়নি</h2>'+
@@ -136,13 +150,13 @@ async function boot(){
   STATE=await loadState();
   if(!STATE){
     document.body.innerHTML='<div style="max-width:520px;margin:80px auto;font-family:sans-serif;line-height:1.6;padding:0 20px">'+
-      '<h2>⚠️ Database-এ কানেক্ট করা যায়নি</h2><p>Supabase URL/Key ঠিক আছে কিনা, আর schema.sql রান করা হয়েছে কিনা চেক করুন।</p></div>';
+      '<h2>⚠️ Database-এ কানেক্ট করা যায়নি</h2><p>Supabase URL/Key ঠিক আছে কিনা, আর schema.sql (ও migration.sql, যদি আগে schema.sql রান করা থাকে) রান করা হয়েছে কিনা চেক করুন।</p></div>';
     return;
   }
   applyTheme();
   if(!STATE.settings.setupDone){ document.getElementById('setup-screen').style.display='flex'; return; }
   document.getElementById('login-title').textContent=STATE.settings.messName||'মেস খাতা';
-  document.getElementById('login-sub').textContent=(STATE.settings.messName?('"'+STATE.settings.messName+'"')+'-এ ':'')+'লগিন করতে আপনার PIN দিন।';
+  document.getElementById('login-sub').textContent=(STATE.settings.messName?('"'+STATE.settings.messName+'"')+'-এ ':'')+'লগিন করতে আপনার ফোন নম্বর ও Password দিন।';
   document.getElementById('login-screen').style.display='flex';
 }
 function applyTheme(){
@@ -156,47 +170,71 @@ function toggleTheme(){
   supa.from('settings').update({theme:STATE.settings.theme}).eq('id',1).then(()=>{});
 }
 
-/* ── Setup (first run — writes the seeded settings row) ──────── */
+/* ── Setup (first run — creates the Mess + the Owner/Super-Admin account) ── */
 async function doSetup(){
-  const name=document.getElementById('su-name').value.trim();
-  const pin=document.getElementById('su-pin').value.trim();
+  const messName=document.getElementById('su-name').value.trim();
+  const ownerName=document.getElementById('su-owner-name').value.trim();
+  const ownerPhone=document.getElementById('su-owner-phone').value.trim();
+  const ownerPass=document.getElementById('su-owner-pass').value;
   const err=document.getElementById('su-err'); err.style.display='none';
-  if(!name){err.textContent='মেসের নাম দিন';err.style.display='block';return;}
-  if(!/^\d{4,6}$/.test(pin)){err.textContent='৪-৬ সংখ্যার Manager PIN দিন';err.style.display='block';return;}
+  if(!messName){err.textContent='মেসের নাম দিন';err.style.display='block';return;}
+  if(!ownerName){err.textContent='আপনার নাম দিন';err.style.display='block';return;}
+  if(!ownerPhone){err.textContent='ফোন নম্বর দিন';err.style.display='block';return;}
+  if(!ownerPass||ownerPass.length<4){err.textContent='কমপক্ষে ৪ ক্যারেক্টারের Password দিন';err.style.display='block';return;}
   setBusy('su-btn',true);
-  const ok=await dbOp(supa.from('settings').update({mess_name:name,admin_pin:pin,setup_done:true}).eq('id',1),'সেটআপ সেভ করা যায়নি');
+  const ownerId='MB-001';
+  const passwordHash=await hashPassword(ownerPass);
+  const memberOk=await dbOp(supa.from('members').insert({id:ownerId,name:ownerName,phone:ownerPhone,password_hash:passwordHash,status:'Active',joined:todayISO(),notes:''}),'Owner account তৈরি করা যায়নি');
+  if(!memberOk){ setBusy('su-btn',false,'খাতা তৈরি করুন'); err.textContent='Owner account তৈরি করা যায়নি'; err.style.display='block'; return; }
+  const settingsOk=await dbOp(supa.from('settings').update({mess_name:messName,owner_member_id:ownerId,setup_done:true}).eq('id',1),'সেটআপ সেভ করা যায়নি');
   setBusy('su-btn',false,'খাতা তৈরি করুন');
-  if(ok){
-    STATE.settings={messName:name,adminPin:pin,viewerPin:'',theme:'light',setupDone:true};
+  if(settingsOk){
+    STATE.settings={messName,theme:'light',setupDone:true,ownerMemberId:ownerId};
+    STATE.members.push({id:ownerId,name:ownerName,phone:ownerPhone,status:'Active',joined:todayISO(),left:'',notes:''});
     document.getElementById('setup-screen').style.display='none';
-    isAdmin=true; showApp();
-  } else { err.textContent='সেটআপ সেভ করা যায়নি — Supabase schema ঠিকমতো রান হয়েছে কিনা দেখুন'; err.style.display='block'; }
+    currentMember=STATE.members[0]; isSuperAdmin=true; isMonthManager=false; isAdmin=true;
+    showApp();
+  } else { err.textContent='সেটআপ সেভ করা যায়নি — Supabase schema/migration ঠিকমতো রান হয়েছে কিনা দেখুন'; err.style.display='block'; }
 }
 
-/* ── Login (normal PIN form — role decided by which PIN matches) ── */
+/* ── Login (phone + password) ─────────────────────────────────
+   Role is computed automatically:
+   • Owner (created at setup)                    → Super Admin (full access + Settings)
+   • Whoever is this month's assigned Manager     → full access to data (not Settings)
+   • Everyone else with a valid login             → view-only access to everything
+*/
 function togglePinVisibility(){
-  const inp=document.getElementById('login-pin');
+  const inp=document.getElementById('login-pass');
   const eye=document.getElementById('pin-eye');
   const showing=inp.type==='text';
   inp.type=showing?'password':'text';
   eye.innerHTML=showing?ICONS.EYE:ICONS.EYEOFF;
 }
-function doLogin(){
-  const pin=document.getElementById('login-pin').value.trim();
+async function doLogin(){
+  const phone=document.getElementById('login-phone').value.trim();
+  const pass=document.getElementById('login-pass').value;
   const err=document.getElementById('login-err'); err.style.display='none';
-  if(!pin){err.textContent='PIN দিন';err.style.display='block';return;}
-  if(pin===STATE.settings.adminPin){
-    isAdmin=true;
-    document.getElementById('login-screen').style.display='none';
-    document.getElementById('login-pin').value='';
-    showApp();
-  } else if(STATE.settings.viewerPin && pin===STATE.settings.viewerPin){
-    isAdmin=false;
-    document.getElementById('login-screen').style.display='none';
-    document.getElementById('login-pin').value='';
-    showApp();
-  } else {
-    err.textContent='ভুল PIN, আবার চেষ্টা করুন'; err.style.display='block';
+  if(!phone||!pass){err.textContent='ফোন নম্বর ও Password দিন';err.style.display='block';return;}
+  const member=STATE.members.find(m=>m.phone&&m.phone===phone);
+  if(!member){err.textContent='এই ফোন নম্বর দিয়ে কোনো member পাওয়া যায়নি';err.style.display='block';return;}
+  if(!member.passwordHash){err.textContent='আপনার Password এখনো সেট করা হয়নি — Manager/Owner-এর সাথে যোগাযোগ করুন';err.style.display='block';return;}
+  setBusy('login-btn',true);
+  const hash=await hashPassword(pass);
+  setBusy('login-btn',false,'লগিন করুন');
+  if(hash!==member.passwordHash){err.textContent='ভুল Password, আবার চেষ্টা করুন';err.style.display='block';return;}
+  currentMember=member;
+  isSuperAdmin=(STATE.settings.ownerMemberId===member.id);
+  const mgr=managerFor(curMon(),curYr());
+  isMonthManager=!!(mgr&&mgr.mid===member.id);
+  isAdmin=isSuperAdmin||isMonthManager;
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('login-phone').value='';document.getElementById('login-pass').value='';
+  showApp();
+}
+function doLogout(){ location.reload(); }
+function registerServiceWorker(){
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('sw.js').catch(()=>{ /* non-fatal — app still works without it */ });
   }
 }
 
@@ -212,8 +250,9 @@ function showApp(){
     document.getElementById(id).innerHTML='<option value="">সব</option>'+MONTHS.map(m=>`<option>${m}</option>`).join('');
   });
   populateMemberSelects();
-  // Viewer role: hide Settings (holds PINs) and show a "View Only" badge
-  document.querySelector('.sb-item[data-page="settings"]').style.display=isAdmin?'':'none';
+  // Settings (Mess name + Manager roster) is Super-Admin (Owner) only
+  document.querySelector('.sb-item[data-page="settings"]').style.display=isSuperAdmin?'':'none';
+  document.getElementById('sb-whoami').innerHTML=`${ICONS.USERS}<span>${escapeHtml(currentMember.name)} ${isSuperAdmin?'(Owner)':isMonthManager?'(This Month\u2019s Manager)':'(View Only)'}</span>`;
   let vb=document.getElementById('view-badge');
   if(!isAdmin){
     if(!vb){
@@ -223,6 +262,7 @@ function showApp(){
     }
   } else if(vb){ vb.remove(); }
   goTo('dashboard');
+  checkCarryForwardDue();
 }
 function openDrawer(){document.getElementById('sidebar').classList.add('on');document.getElementById('drawerBd').classList.add('on');}
 function closeDrawer(){document.getElementById('sidebar').classList.remove('on');document.getElementById('drawerBd').classList.remove('on');}
@@ -250,7 +290,7 @@ function renderPage(p){
   else if(p==='summary')renderSummary();
   else if(p==='settings')renderSettings();
 }
-function refreshAll(){populateMemberSelects();renderPage(curPage);}
+function refreshAll(){populateMemberSelects();renderPage(curPage);if(currentMember)checkCarryForwardDue();}
 function doAdd(){
   if(!isAdmin)return;
   if(curPage==='members')openMemberModal();
@@ -266,6 +306,12 @@ function populateMemberSelects(){
     el.innerHTML='<option value="">-- Member বাছুন --</option>'+active.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
     if(active.find(m=>m.id===prev))el.value=prev;
   });
+  const bzby=document.getElementById('bzby');
+  if(bzby){
+    const prev=bzby.value;
+    bzby.innerHTML='<option value="">-- কে বাজার করেছে --</option>'+active.map(m=>`<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`).join('')+'<option value="__other__">অন্য কেউ...</option>';
+    if(prev)bzby.value=prev;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -370,15 +416,18 @@ function memSearch(v){mSearch=v.toLowerCase().trim();renderMembers();}
 function openMemberModal(id){
   editMemberId=id||null;
   document.getElementById('mem-modal-title').textContent=id?'Edit Member':'Add Member';
+  document.getElementById('mm-password').value='';
   if(id){
     const m=STATE.members.find(x=>x.id===id);
     document.getElementById('mm-name').value=m.name;document.getElementById('mm-phone').value=m.phone;
     document.getElementById('mm-status').value=m.status;document.getElementById('mm-joined').value=m.joined||todayISO();
     document.getElementById('mm-notes').value=m.notes;
+    document.getElementById('mm-pass-hint').textContent=m.passwordHash?'পাসওয়ার্ড আগে থেকেই সেট আছে — বদলাতে চাইলে নতুনটা লিখুন, নাহলে খালি রাখুন।':'এখনো কোনো পাসওয়ার্ড সেট করা হয়নি, তাই সে এখনো লগিন করতে পারবে না।';
   } else {
     document.getElementById('mm-name').value='';document.getElementById('mm-phone').value='';
     document.getElementById('mm-status').value='Active';document.getElementById('mm-joined').value=todayISO();
     document.getElementById('mm-notes').value='';
+    document.getElementById('mm-pass-hint').textContent='খালি রাখলে সে এখনো লগিন করতে পারবে না, পরে বসিয়ে দিতে পারবেন।';
   }
   setBusy('save-mem',false,ICONS.CHECK+'Save');openM('ov-member');
 }
@@ -386,6 +435,11 @@ async function saveMember(){
   if(!requireAdmin())return;
   const name=document.getElementById('mm-name').value.trim();
   if(!name){toast('নাম দিন','er');return;}
+  const phone=document.getElementById('mm-phone').value.trim();
+  if(phone && STATE.members.some(m=>m.phone===phone && m.id!==editMemberId)){
+    toast('এই ফোন নম্বর দিয়ে আগে থেকেই একজন member আছে','er'); return;
+  }
+  const passRaw=document.getElementById('mm-password').value;
   setBusy('save-mem',true);
   let ok;
   if(editMemberId){
@@ -394,25 +448,28 @@ async function saveMember(){
     let leftDate=m.left;
     if(newStatus==='Left'&&m.status!=='Left'&&!leftDate)leftDate=todayISO();
     if(newStatus==='Active')leftDate='';
-    const phone=document.getElementById('mm-phone').value.trim();
     const joined=document.getElementById('mm-joined').value;
     const notes=document.getElementById('mm-notes').value.trim();
-    ok=await dbOp(supa.from('members').update({name,phone,status:newStatus,joined:joined||null,left_date:leftDate||null,notes}).eq('id',editMemberId),'Member আপডেট করা যায়নি');
-    if(ok){ m.name=name;m.phone=phone;m.status=newStatus;m.joined=joined;m.left=leftDate;m.notes=notes; }
+    const patch={name,phone,status:newStatus,joined:joined||null,left_date:leftDate||null,notes};
+    let newHash=m.passwordHash;
+    if(passRaw){ newHash=await hashPassword(passRaw); patch.password_hash=newHash; }
+    ok=await dbOp(supa.from('members').update(patch).eq('id',editMemberId),'Member আপডেট করা যায়নি');
+    if(ok){ m.name=name;m.phone=phone;m.status=newStatus;m.joined=joined;m.left=leftDate;m.notes=notes;m.passwordHash=newHash; }
   } else {
     const id=genId(STATE.members,'MB-');
-    const phone=document.getElementById('mm-phone').value.trim();
     const status=document.getElementById('mm-status').value;
     const joined=document.getElementById('mm-joined').value;
     const notes=document.getElementById('mm-notes').value.trim();
-    ok=await dbOp(supa.from('members').insert({id,name,phone,status,joined:joined||null,notes}),'Member যোগ করা যায়নি');
-    if(ok)STATE.members.push({id,name,phone,status,joined,left:'',notes});
+    const passwordHash=passRaw?await hashPassword(passRaw):'';
+    ok=await dbOp(supa.from('members').insert({id,name,phone,password_hash:passwordHash,status,joined:joined||null,notes}),'Member যোগ করা যায়নি');
+    if(ok)STATE.members.push({id,name,phone,passwordHash,status,joined,left:'',notes});
   }
   setBusy('save-mem',false,ICONS.CHECK+'Save');
   if(ok){ closeM('ov-member'); persist(editMemberId?'Member আপডেট হয়েছে':'Member যোগ হয়েছে'); }
 }
 async function delMember(id){
   if(!requireAdmin())return;
+  if(id===STATE.settings.ownerMemberId){ toast('Owner account ডিলিট করা যাবে না','er'); return; }
   if(!confirm('এই member ডিলিট করবেন? তার আগের meal/deposit রেকর্ড থেকে যাবে।'))return;
   const ok=await dbOp(supa.from('members').delete().eq('id',id),'Member ডিলিট করা যায়নি');
   if(ok){ STATE.members=STATE.members.filter(m=>m.id!==id); persist('Member ডিলিট হয়েছে'); }
@@ -450,18 +507,22 @@ function loadMealGrid(){
   lab.textContent=mealSelDate===todayISO()?'আজ · '+fmtDate(mealSelDate):fmtDate(mealSelDate);
   document.getElementById('meal-quickfill').style.display=isAdmin?'':'none';
   document.getElementById('save-meal-grid').style.display=isAdmin?'':'none';
-  const members=STATE.members.filter(m=>m.status==='Active');
+  // Only members who had already joined on/before the selected date are eligible —
+  // e.g. Arafat joined on the 8th, so no meal can be logged for him before the 8th.
+  const allActive=STATE.members.filter(m=>m.status==='Active');
+  const eligible=allActive.filter(m=>!m.joined||m.joined<=mealSelDate);
+  const notYetJoined=allActive.filter(m=>m.joined&&m.joined>mealSelDate);
   const grid=document.getElementById('meal-grid');
+  let noticeHtml=notYetJoined.length?`<div class="ibox warn" style="margin-bottom:10px">${ICONS.INFO}<div>${notYetJoined.map(m=>escapeHtml(m.name)+' ('+fmtDate(m.joined)+' থেকে যোগ)').join(', ')} — এই তারিখে এখনো মেসে যোগ দেননি, তাই মিল যোগ করা যাচ্ছে না।</div></div>`:'';
   if(!isAdmin){
-    grid.innerHTML=members.map(m=>{
+    grid.innerHTML=noticeHtml+eligible.map(m=>{
       const ex=STATE.mealEntries.find(e=>e.mid===m.id&&e.date===mealSelDate);
-      const total=ex?(N(ex.meals)+N(ex.guest)):0;
       return `<div class="meal-row"><div class="nm">${avatar(m)}${escapeHtml(m.name)}</div>
         <div style="font-weight:700" class="num">${ex?N(ex.meals):'—'} meal${ex&&N(ex.guest)>0?` + ${N(ex.guest)} guest`:''}</div></div>`;
     }).join('')||`<div class="empty">${ICONS.EMPTY}<p>কোনো Active member নেই</p></div>`;
     renderMealRecent(); return;
   }
-  grid.innerHTML=members.map(m=>{
+  grid.innerHTML=noticeHtml+eligible.map(m=>{
     const ex=STATE.mealEntries.find(e=>e.mid===m.id&&e.date===mealSelDate);
     const hasGuest=!!(ex&&N(ex.guest)>0);
     return `<div class="meal-row">
@@ -483,21 +544,31 @@ function toggleGuestInput(mid){
   if(!cb.checked)document.getElementById('mgg-'+mid).value='';
 }
 function quickFillMeals(val){
-  STATE.members.filter(m=>m.status==='Active').forEach(m=>{
+  STATE.members.filter(m=>m.status==='Active'&&(!m.joined||m.joined<=mealSelDate)).forEach(m=>{
     const el=document.getElementById('mg-'+m.id); if(el)el.value=val;
   });
   toast(val>0?'সবাইকে '+val+' Meal দেওয়া হয়েছে':'সবাইকে Off দেওয়া হয়েছে','ok');
 }
 async function saveMealGrid(){
   if(!requireAdmin())return;
-  const members=STATE.members.filter(m=>m.status==='Active');
-  if(!members.length){toast('কোনো Active member নেই','er');return;}
+  // Only members already joined on/before this date are eligible to save (matches loadMealGrid)
+  const members=STATE.members.filter(m=>m.status==='Active'&&(!m.joined||m.joined<=mealSelDate));
+  if(!members.length){toast('কোনো eligible Active member নেই','er');return;}
   setBusy('save-meal-grid',true);
+  // Compute the next ME- number ONCE and increment it across the whole batch —
+  // calling genId() separately per member inside the loop was the bug: every
+  // brand-new row got the SAME "next" id (since STATE.mealEntries hadn't grown
+  // yet), so inserting 2+ new entries in one Save hit the primary-key unique
+  // constraint on `id`. Meal *values* being equal was never the actual cause.
+  const existingNums=STATE.mealEntries.map(e=>parseInt(String(e.id).replace('ME-',''))||0);
+  let nextNum=Math.max(0,...existingNums,0)+1;
   const rows=members.map(m=>{
     const meals=N(document.getElementById('mg-'+m.id).value);
     const guest=N(document.getElementById('mgg-'+m.id).value);
     const idx=STATE.mealEntries.findIndex(e=>e.mid===m.id&&e.date===mealSelDate);
-    const id=idx>=0?STATE.mealEntries[idx].id:genId(STATE.mealEntries,'ME-');
+    let id;
+    if(idx>=0){ id=STATE.mealEntries[idx].id; }
+    else { id='ME-'+String(nextNum).padStart(4,'0'); nextNum++; }
     return {id, date:mealSelDate, mid:m.id, name:m.name, meals, guest, notes:''};
   });
   const dbRows=rows.map(r=>({id:r.id,date:r.date,member_id:r.mid,member_name:r.name,meals:r.meals,guest:r.guest,notes:r.notes}));
@@ -569,15 +640,55 @@ function renderBazar(){
 }
 function openBazarModal(){
   document.getElementById('bzd').value=todayISO();document.getElementById('bzamt').value='';document.getElementById('bznote').value='';
-  const mgr=managerFor(curMon(),curYr()); document.getElementById('bzby').value=mgr?mgr.name:'';
+  document.getElementById('bzitem-name').value='';document.getElementById('bzitem-amt').value='';
+  bazarItems=[]; renderBazarItems();
+  populateMemberSelects();
+  const mgr=managerFor(curMon(),curYr());
+  document.getElementById('bzby').value=mgr?mgr.name:'';
+  document.getElementById('bzby-other-wrap').style.display='none';
+  document.getElementById('bzby-other').value='';
   setBusy('save-bz',false,ICONS.CHECK+'Save');openM('ov-bazar');
+}
+function toggleBzbyOther(){
+  const isOther=document.getElementById('bzby').value==='__other__';
+  document.getElementById('bzby-other-wrap').style.display=isOther?'':'none';
+}
+// ── Item-list builder: add "চাল ৫ কেজি — ৳200" style rows, auto-sums into
+// Amount and auto-writes a readable list into Notes, so the manager doesn't
+// have to type a whole paragraph by hand every time.
+let bazarItems=[];
+function addBazarItem(){
+  const nameEl=document.getElementById('bzitem-name'), amtEl=document.getElementById('bzitem-amt');
+  const name=nameEl.value.trim(), amt=N(amtEl.value);
+  if(!name){toast('আইটেমের নাম দিন','er');return;}
+  if(amt<=0){toast('আইটেমের দাম দিন','er');return;}
+  bazarItems.push({name,amt});
+  nameEl.value=''; amtEl.value=''; nameEl.focus();
+  renderBazarItems();
+}
+function removeBazarItem(i){ bazarItems.splice(i,1); renderBazarItems(); }
+function renderBazarItems(){
+  document.getElementById('bzitem-list').innerHTML=bazarItems.map((it,i)=>
+    `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px">
+      <span>${escapeHtml(it.name)}</span>
+      <span style="display:flex;align-items:center;gap:8px"><b class="num">৳${fmt(it.amt)}</b>
+      <button type="button" class="btn icon ghost sm" onclick="removeBazarItem(${i})" style="width:24px;height:24px;padding:4px">${ICONS.X}</button></span>
+    </div>`).join('');
+  const total=bazarItems.reduce((a,it)=>a+it.amt,0);
+  if(bazarItems.length){
+    document.getElementById('bzamt').value=total;
+    document.getElementById('bznote').value=bazarItems.map(it=>it.name+' — ৳'+fmt(it.amt)).join(', ');
+  }
 }
 async function saveBazar(){
   if(!requireAdmin())return;
   const amt=N(document.getElementById('bzamt').value);
   if(amt<=0){toast('Amount দিন','er');return;}
+  const bySel=document.getElementById('bzby').value;
+  const by=bySel==='__other__'?document.getElementById('bzby-other').value.trim():bySel;
+  if(!by){toast('কে বাজার করেছে বাছুন বা নাম লিখুন','er');return;}
   setBusy('save-bz',true);
-  const rec={id:genId(STATE.bazarExp,'BZ-'),date:document.getElementById('bzd').value,by:document.getElementById('bzby').value.trim(),amount:amt,notes:document.getElementById('bznote').value.trim()};
+  const rec={id:genId(STATE.bazarExp,'BZ-'),date:document.getElementById('bzd').value,by,amount:amt,notes:document.getElementById('bznote').value.trim()};
   const ok=await dbOp(supa.from('bazar_expenses').insert({id:rec.id,date:rec.date,bought_by:rec.by,amount:rec.amount,notes:rec.notes}),'Bazar expense যোগ করা যায়নি');
   setBusy('save-bz',false,ICONS.CHECK+'Save');
   if(ok){ STATE.bazarExp.push(rec); closeM('ov-bazar'); persist('Bazar expense যোগ হয়েছে'); }
@@ -654,9 +765,10 @@ function openDepositModal(){
 }
 async function saveDeposit(){
   if(!requireAdmin())return;
-  const mid=document.getElementById('dep-member').value, amt=N(document.getElementById('depamt').value);
+  const mid=document.getElementById('dep-member').value, amtRaw=document.getElementById('depamt').value.trim();
   if(!mid){toast('Member বাছুন','er');return;}
-  if(amt<=0){toast('Amount দিন','er');return;}
+  if(amtRaw===''||isNaN(Number(amtRaw))){toast('একটা সঠিক Amount দিন','er');return;}
+  const amt=Number(amtRaw);
   const member=STATE.members.find(m=>m.id===mid);
   setBusy('save-dep',true);
   const rec={id:genId(STATE.deposits,'DEP-'),date:document.getElementById('depd').value,mid,name:member.name,amount:amt,method:document.getElementById('depmeth').value,notes:document.getElementById('depnote').value.trim()};
@@ -717,6 +829,12 @@ async function saveManager(){
     const idx=STATE.managers.findIndex(x=>x.monthYear===key);
     const rec={monthYear:key,mid,name:member.name};
     if(idx>=0)STATE.managers[idx]=rec; else STATE.managers.push(rec);
+    // If this assignment is for the CURRENT month, refresh the logged-in
+    // user's own access live (no need to log out/in again).
+    if(month===curMon()&&Number(year)===curYr()&&currentMember){
+      isMonthManager=(mid===currentMember.id);
+      isAdmin=isSuperAdmin||isMonthManager;
+    }
     closeM('ov-manager'); persist('Manager assign হয়েছে');
   }
 }
@@ -733,41 +851,75 @@ function exportSummaryCSV(){
 }
 
 /* ═══════════════════════════════════════════════════════════
+   MONTH-END CARRY FORWARD
+   জুলাই শেষ হলে যার যত ব্যালেন্স (+/-) থাকে, সেটা অগাস্টের প্রথম দিনে
+   তার Deposit হিসেবে বসিয়ে দেওয়া হয় — যাতে পরের মাসের হিসাব শুরুতেই
+   ঠিক জায়গা থেকে শুরু হয়। কোনো real server cron নেই (এটা static site),
+   তাই সম্পূর্ণ silent-automatic করা সম্ভব না — Owner/Manager লগিন করলে
+   ড্যাশবোর্ডে একটা ব্যানার দেখাবে, এক ক্লিকেই করে দেওয়া যায়।
+   ═══════════════════════════════════════════════════════════ */
+function prevMonthYear(){
+  const d=new Date(); d.setDate(1); d.setMonth(d.getMonth()-1);
+  return {month:MONTHS[d.getMonth()], year:d.getFullYear()};
+}
+function nextMonthFirstDate(month,year){
+  const idx=MONTHS.indexOf(month);
+  const d=new Date(year, idx+1, 1);
+  const pad=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+function cfMarker(month,year){ return `[CF:${month}-${year}]`; }
+function isCarryForwardApplied(month,year){
+  const marker=cfMarker(month,year);
+  return STATE.deposits.some(p=>p.notes&&p.notes.includes(marker));
+}
+function checkCarryForwardDue(){
+  const banner=document.getElementById('cf-banner');
+  if(!banner)return;
+  if(!isAdmin){ banner.innerHTML=''; return; }
+  const {month,year}=prevMonthYear();
+  const {bazar,meals}=mealRateFor(month,year);
+  const hadActivity=bazar>0||meals>0;
+  if(!hadActivity||isCarryForwardApplied(month,year)){ banner.innerHTML=''; return; }
+  banner.innerHTML=`<div class="ibox warn" style="margin-bottom:16px;align-items:center">${ICONS.ALERT}
+    <div style="flex:1"><b>${month} ${year}</b>-এর ব্যালেন্স এখনো পরের মাসে carry forward করা হয়নি।</div>
+    <button class="btn sm primary" onclick="doCarryForward('${month}',${year})">Carry Forward করুন</button></div>`;
+}
+async function doCarryForward(month,year){
+  if(!requireAdmin())return;
+  if(isCarryForwardApplied(month,year)){ toast('এই মাসের carry forward আগেই করা হয়েছে','er'); return; }
+  const targetDate=nextMonthFirstDate(month,year);
+  const members=STATE.members.filter(m=>m.status!=='Left');
+  const marker=cfMarker(month,year);
+  const existingNums=STATE.deposits.map(p=>parseInt(String(p.id).replace('DEP-',''))||0);
+  let nextNum=Math.max(0,...existingNums,0)+1;
+  const rows=[];
+  members.forEach(m=>{
+    const bal=memberSummary(m.id,month,year).balance;
+    if(Math.round(bal)===0)return;
+    const id='DEP-'+String(nextNum).padStart(3,'0'); nextNum++;
+    rows.push({id,date:targetDate,mid:m.id,name:m.name,amount:Math.round(bal),method:'Carry Forward',notes:`গত মাসের ব্যালেন্স স্থানান্তর ${marker}`});
+  });
+  if(!rows.length){ toast('কারো ব্যালেন্স নেই, কিছু করার দরকার নেই','ok'); return; }
+  const dbRows=rows.map(r=>({id:r.id,date:r.date,member_id:r.mid,member_name:r.name,amount:r.amount,method:r.method,notes:r.notes}));
+  const ok=await dbOp(supa.from('deposits').insert(dbRows),'Carry forward করা যায়নি');
+  if(ok){ STATE.deposits.push(...rows); persist(`${month} ${year}-এর ব্যালেন্স carry forward হয়েছে`); }
+}
+
+/* ═══════════════════════════════════════════════════════════
    SETTINGS
    ═══════════════════════════════════════════════════════════ */
 function renderSettings(){
+  if(!requireSuperAdmin()){ goTo('dashboard'); return; }
   document.getElementById('set-messname').value=STATE.settings.messName;
-  document.getElementById('set-admin-pin').value='';
-  document.getElementById('set-viewer-pin').value='';
   const mgrs=[...STATE.managers].sort((a,b)=>b.monthYear.localeCompare(a.monthYear));
   document.getElementById('set-managers-list').innerHTML=mgrs.map(x=>`<div class="led-row"><span>${x.monthYear}</span><b>${escapeHtml(x.name)}</b></div>`).join('')||'<p class="hint">কোনো Manager assign করা হয়নি</p>';
 }
 async function saveMessInfo(){
-  if(!requireAdmin())return;
+  if(!requireSuperAdmin())return;
   const name=document.getElementById('set-messname').value.trim()||'My Mess';
   const ok=await dbOp(supa.from('settings').update({mess_name:name}).eq('id',1),'Save করা যায়নি');
   if(ok){ STATE.settings.messName=name; document.getElementById('sb-messname').textContent=name; persist('Save হয়েছে'); }
-}
-async function savePins(){
-  if(!requireAdmin())return;
-  const newAdmin=document.getElementById('set-admin-pin').value.trim();
-  const newViewer=document.getElementById('set-viewer-pin').value.trim();
-  const viewerTouched=document.getElementById('set-viewer-pin').value!=='';
-  if(newAdmin && !/^\d{4,6}$/.test(newAdmin)){toast('Manager PIN ৪-৬ সংখ্যার হতে হবে','er');return;}
-  if(newViewer && !/^\d{4,6}$/.test(newViewer)){toast('Member PIN ৪-৬ সংখ্যার হতে হবে','er');return;}
-  if(newAdmin && newAdmin===newViewer){toast('Manager আর Member PIN একই রাখা যাবে না','er');return;}
-  const patch={};
-  if(newAdmin)patch.admin_pin=newAdmin;
-  if(viewerTouched)patch.viewer_pin=newViewer;
-  if(!Object.keys(patch).length){toast('কিছু বদলাননি','er');return;}
-  const ok=await dbOp(supa.from('settings').update(patch).eq('id',1),'PIN আপডেট করা যায়নি');
-  if(ok){
-    if(newAdmin)STATE.settings.adminPin=newAdmin;
-    if(viewerTouched)STATE.settings.viewerPin=newViewer;
-    document.getElementById('set-admin-pin').value='';
-    document.getElementById('set-viewer-pin').value='';
-    persist('PIN আপডেট হয়েছে');
-  }
 }
 function downloadBlob(content,filename,mime){
   const blob=new Blob([content],{type:mime});
@@ -775,22 +927,5 @@ function downloadBlob(content,filename,mime){
   const a=document.createElement('a'); a.href=url; a.download=filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(()=>URL.revokeObjectURL(url),2000);
-}
-async function resetAllData(){
-  if(!requireAdmin())return;
-  if(!confirm('⚠️ এতে সব Member, Meal, Bazar, Deposit ডেটা চিরতরে মুছে যাবে। নিশ্চিত?'))return;
-  if(!confirm('আরেকবার নিশ্চিত করুন — এই কাজ Undo করা যাবে না।'))return;
-  const results=await Promise.all([
-    supa.from('members').delete().neq('id','__none__'),
-    supa.from('meal_entries').delete().neq('id','__none__'),
-    supa.from('bazar_expenses').delete().neq('id','__none__'),
-    supa.from('other_expenses').delete().neq('id','__none__'),
-    supa.from('deposits').delete().neq('id','__none__'),
-    supa.from('managers').delete().neq('month_year','__none__'),
-  ]);
-  const err=results.find(r=>r.error);
-  if(err){ toast('মুছে ফেলার সময় সমস্যা হয়েছে: '+err.error.message,'er'); return; }
-  STATE.members=[];STATE.mealEntries=[];STATE.bazarExp=[];STATE.otherExp=[];STATE.deposits=[];STATE.managers=[];
-  persist('সব ডেটা মুছে ফেলা হয়েছে');
 }
 

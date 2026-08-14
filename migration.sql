@@ -1,0 +1,44 @@
+-- ═══════════════════════════════════════════════════════════════
+-- মেস খাতা — Migration script (v1 → v2: per-member phone+password login)
+-- আপনি যদি আগে schema.sql (v1, PIN-based) রান করে থাকেন এবং ইতিমধ্যে
+-- deploy করে ফেলে থাকেন, তাহলে schema.sql আবার রান করবেন না —
+-- এই ফাইলটা রান করুন, এটা আপনার এক্সিস্টিং ডেটা মুছবে না, শুধু নতুন
+-- কলাম যোগ করবে।
+-- Supabase Dashboard → SQL Editor → New query → পুরোটা পেস্ট করে Run করুন
+-- ═══════════════════════════════════════════════════════════════
+
+alter table members add column if not exists password_hash text not null default '';
+alter table settings add column if not exists owner_member_id text;
+
+-- আপনার আগের "Manager PIN দিয়ে যিনি লগিন করতেন" তিনিই এখন app-এর নতুন
+-- লগিন সিস্টেমে Owner হবেন। নিচের ধাপ অনুসরণ করুন:
+--
+-- ১) Table Editor → members → আপনার নিজের member row-টা বের করুন
+--    (না থাকলে নতুন একটা row যোগ করুন: id='MB-001', name, phone, status='Active')
+-- ২) সেই row-এর phone কলামে আপনার ফোন নম্বর বসান
+-- ৩) settings টেবিলে owner_member_id কলামে সেই member-এর id বসান, যেমনঃ
+--
+--    update settings set owner_member_id = 'MB-001' where id = 1;
+--
+-- ৪) Password সেট করা এই SQL দিয়ে সরাসরি করা যায় না (app SHA-256 hash করে
+--    বসায়) — তাই অ্যাপ চালু করে Members পেজ থেকে (ততক্ষণে আপনি এখনো লগিন
+--    করতে পারবেন না যেহেতু password ফাঁকা) — বিকল্প উপায়ঃ প্রথমে app-টা
+--    খুলুন, "Setup হয়নি" স্ক্রিন দেখাবে না (setup_done ইতিমধ্যে true), তাই
+--    Login স্ক্রিন দেখাবে কিন্তু password না থাকায় ঢুকতে পারবেন না। এক্ষেত্রে
+--    সহজ সমাধানঃ ব্রাউজার কনসোল (F12) খুলে এই কোডটা রান করুন (শুধু একবার,
+--    আপনার নিজের সাইটে) —
+--
+--    (async()=>{
+--      const enc=new TextEncoder().encode('meskhata_v1::আপনার-নতুন-পাসওয়ার্ড');
+--      const buf=await crypto.subtle.digest('SHA-256',enc);
+--      console.log(Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join(''));
+--    })();
+--
+--    এটা যে hash প্রিন্ট করবে সেটা কপি করে Supabase Table Editor-এ members
+--    টেবিলে আপনার row-এর password_hash কলামে বসিয়ে দিন। এরপর সেই
+--    "আপনার-নতুন-পাসওয়ার্ড" দিয়ে অ্যাপে লগিন করা যাবে।
+--
+-- (ঐচ্ছিক) পুরনো PIN কলাম দুটো আর ব্যবহার হয় না, চাইলে পরিষ্কার করতে
+-- আনকমেন্ট করে রান করুন:
+-- alter table settings drop column if exists admin_pin;
+-- alter table settings drop column if exists viewer_pin;

@@ -1,86 +1,112 @@
-# মেস খাতা — Deploy Guide (Supabase + Vercel + GitHub)
+# Meal Tracker (মেস খাতা) — Deploy Guide
 
-আপনার কাছে Vercel, Supabase, আর GitHub অ্যাকাউন্ট আছে ধরে নিয়ে — নিচের ধাপগুলো ক্রমানুসারে করুন। মোট সময় লাগবে ~১৫ মিনিট।
+আপনার কাছে Vercel, Supabase, আর GitHub অ্যাকাউন্ট আছে ধরে নিয়ে — নিচের ধাপগুলো ক্রমানুসারে করুন। মোট সময় লাগবে ~১৫-২০ মিনিট।
 
 **ফাইল স্ট্রাকচার:**
 ```
-├── index.html   ← পেজ মার্কআপ
-├── style.css    ← সব CSS/ডিজাইন
-├── config.js    ← শুধু Supabase URL/Key (এই একটাই এডিট করবেন)
-├── app.js       ← পুরো অ্যাপ লজিক
-├── schema.sql   ← Supabase-এ একবার রান করার SQL
-└── README.md    ← এই ফাইল
+├── index.html            ← পেজ মার্কআপ
+├── style.css             ← সব CSS/ডিজাইন
+├── config.js             ← শুধু Supabase URL/Key (এই একটাই এডিট করবেন)
+├── app.js                ← পুরো অ্যাপ লজিক
+├── schema.sql             ← নতুন Supabase প্রজেক্টে একবার রান করার SQL
+├── migration.sql          ← আগে থেকে deploy করা থাকলে এইটা রান করুন (schema.sql না)
+├── manifest.json          ← PWA ("Install App") কনফিগ
+├── sw.js                  ← PWA service worker
+├── icon-192.png / icon-512.png / icon-512-maskable.png  ← অ্যাপ আইকন
+└── README.md              ← এই ফাইল
 ```
-৫টা ফাইলই একই ফোল্ডারে/রিপোতে একসাথে থাকা লাগবে — index.html বাকিদের relative path (`style.css`, `config.js`, `app.js`) দিয়ে খুঁজে নেয়।
+সব ফাইলই একই ফোল্ডারে/রিপোতে একসাথে থাকা লাগবে।
 
 ---
 
+## আপনি কি নতুন করে বসাচ্ছেন, নাকি আগে থেকে চালু আছে?
 
-## ধাপ ১ — Supabase-এ Database বানান
+- **একদম নতুন** → নিচের ধাপ ১-৫ অনুসরণ করুন (schema.sql ব্যবহার হবে)।
+- **আগে একবার deploy করেছিলেন (PIN-based পুরনো ভার্সন)** → ধাপ ১-২ স্কিপ করুন (Supabase প্রজেক্ট আগে থেকেই আছে), কিন্তু ধাপ ৩-এ `schema.sql`-এর বদলে **`migration.sql`** রান করুন, তারপর ওই ফাইলের ভেতরের নির্দেশনা অনুযায়ী নিজেকে Owner বানান।
 
-1. [supabase.com](https://supabase.com) → **New Project** — নাম দিন (যেমন `mess-khata`), একটা Database Password সেট করুন (এটা আলাদা রাখুন, পরে লাগবে না তবে হারাবেন না), Region হিসেবে **Singapore** বা কাছেরটা বাছুন (কম latency)।
+---
+
+## ধাপ ১ — Supabase-এ Database বানান (নতুন হলে)
+
+1. [supabase.com](https://supabase.com) → **New Project** — নাম দিন (যেমন `mess-khata`), একটা Database Password সেট করুন, Region **Singapore** বা কাছেরটা বাছুন।
 2. প্রজেক্ট রেডি হতে ~২ মিনিট লাগবে।
-3. বাম সাইডবার থেকে **SQL Editor** এ যান → **New query**।
-4. এই রিপোর মধ্যে থাকা `schema.sql` ফাইলের **পুরো কনটেন্ট কপি-পেস্ট করুন** → **Run** চাপুন।
-   - সফল হলে "Success. No rows returned" দেখাবে।
+3. বাম সাইডবার থেকে **SQL Editor** → **New query** → `schema.sql`-এর পুরো কনটেন্ট পেস্ট → **Run**।
    - এটা ৭টা টেবিল বানাবে: `settings`, `members`, `meal_entries`, `bazar_expenses`, `other_expenses`, `deposits`, `managers`।
-5. বাম সাইডবার থেকে **Project Settings → API** এ যান। দুটো জিনিস কপি করে রাখুন:
-   - **Project URL** (দেখতে এরকম: `https://xxxxxxxxxxxx.supabase.co`)
-   - **anon / public** key (একটা লম্বা টোকেন, `eyJ...` দিয়ে শুরু)
+4. **Project Settings → API** থেকে কপি করে রাখুন:
+   - **Project URL**
+   - **anon / public** key
 
-> ⚠️ **`service_role` key কখনো কপি করবেন না/ব্যবহার করবেন না** — ওটা সিক্রেট, ব্রাউজারে থাকা কোডে বসালে যে কেউ আপনার পুরো ডেটাবেস মুছে ফেলতে পারবে। শুধু **anon/public** key ব্যবহার করুন।
+> ⚠️ **`service_role` key কখনো ব্যবহার করবেন না** — শুধু **anon/public** key।
 
 ---
 
 ## ধাপ ২ — config.js-এ Supabase কনফিগার করুন
 
-`config.js` ফাইলটা খুলুন — পুরোটাই এরকম দেখতে:
-
 ```js
 const SUPABASE_URL = 'https://YOUR-PROJECT-REF.supabase.co';
 const SUPABASE_ANON_KEY = 'YOUR-ANON-PUBLIC-KEY';
 ```
-
-এই দুইটা ভ্যালু ধাপ ১-এ কপি করা URL আর anon key দিয়ে বদলে দিন, ফাইল সেভ করুন। (এই একটা ফাইলই আপনাকে এডিট করতে হবে — বাকি সব ফাইল ছোঁয়া লাগবে না।)
+এই দুইটা বদলে দিয়ে সেভ করুন — এই একটা ফাইলই এডিট করা লাগবে।
 
 ---
 
 ## ধাপ ৩ — GitHub-এ পুশ করুন
 
 ```bash
-git init
+
 git add .
-git commit -m "Meal Management — initial deploy"
+git commit -m "Meal Tracker — deploy"
 git branch -M main
 git remote add origin https://github.com/<আপনার-ইউজারনেম>/mess-khata.git
 git push -u origin main
 ```
 
-(GitHub-এ আগে থেকে একটা খালি রিপো বানিয়ে নিন `mess-khata` নামে — কোনো README/gitignore ছাড়া তৈরি করবেন যাতে conflict না হয়।)
-
 ---
 
 ## ধাপ ৪ — Vercel-এ Deploy করুন
 
-1. [vercel.com/new](https://vercel.com/new) → আপনার GitHub `mess-khata` রিপো **Import** করুন।
-2. Framework Preset: **Other** (কোনো build step লাগবে না, এটা plain static HTML)।
-3. **Deploy** চাপুন — ৩০ সেকেন্ডের মধ্যে লাইভ হয়ে যাবে, একটা URL পাবেন (যেমন `mess-khata.vercel.app`)।
-4. চাইলে Vercel-এর Settings → Domains থেকে নিজের কাস্টম ডোমেইনও যোগ করতে পারেন।
+1. [vercel.com/new](https://vercel.com/new) → GitHub রিপো **Import** করুন।
+2. Framework Preset: **Other** (কোনো build step লাগবে না)।
+3. **Deploy** — একটা URL পাবেন (যেমন `mess-khata.vercel.app`)। HTTPS আবশ্যক PWA install-এর জন্য — Vercel এটা এমনিই দেয়।
 
 ---
 
-## ধাপ ৫ — প্রথমবার ব্যবহার
+## ধাপ ৫ — প্রথমবার ব্যবহার (Setup)
 
 1. আপনার Vercel URL খুলুন।
-2. মেসের নাম + একটা Manager PIN দিয়ে "খাতা তৈরি করুন" চাপুন।
-3. এখন Manager PIN দিয়ে লগিন করে সব ঠিকঠাক আছে কিনা চেক করুন — একজন Member যোগ করে দেখুন Supabase Dashboard-এর **Table Editor → members**-এ সেটা দেখা যাচ্ছে কিনা।
-4. Settings → Access PINs থেকে একটা **Member (View-Only) PIN** সেট করে বাকিদের দিন।
+2. **মেসের নাম + আপনার নাম + ফোন নম্বর + Password** দিয়ে "খাতা তৈরি করুন"। আপনি অটোমেটিক **Owner (Super Admin)** হয়ে যাবেন।
+3. Members পেজ থেকে বাকি সবাইকে যোগ করুন — প্রতিজনের **ফোন নম্বর ও একটা Password** সেট করে দিন (Member এডিট মোডালে)। এটাই তাদের লগিন হবে।
+4. Monthly Summary পেজ থেকে প্রতি মাসে কাকে Manager করবেন সেটা assign করুন — সেই মাসে সে অটোমেটিক এডিট অ্যাক্সেস পাবে।
 
 ---
 
-## যা জানা দরকার
+## Login ও Role সিস্টেম
 
-- **এটা সবার জন্য একই শেয়ার্ড ডেটাবেস** — যে কেউ সঠিক PIN দিয়ে লগিন করলে সবাই একই তথ্য দেখবে/লিখবে, এটাই উদ্দেশ্য ছিল।
-- **নিরাপত্তা নিয়ে honest কথা:** PIN-চেক পুরোপুরি app-এর ভেতরে (browser-এ) হয়, Supabase-এর Row Level Security পুরোপুরি খোলা রাখা আছে (`schema.sql`-এ policy কমেন্ট দেখুন)। মানে টেকনিক্যালি কেউ যদি আপনার Supabase URL + anon key বের করে ফেলে (browser dev-tools থেকে দেখা সম্ভব), সে সরাসরি API কল করে ডেটা পড়তে/লিখতে পারবে, PIN স্ক্রিন এড়িয়ে। ছোট একটা মেসের রোজকার হিসাবের জন্য এটা সাধারণত যথেষ্ট, কিন্তু সত্যিকারের সংবেদনশীল/আর্থিক তথ্যের জন্য উপযুক্ত না। ভবিষ্যতে চাইলে Supabase Auth (প্রতি member-এর জন্য আলাদা account) দিয়ে আরও শক্ত করা যায় — বললে সেটাও বানিয়ে দিতে পারি।
-- **Backup:** Supabase Dashboard → Database → Backups-এ দৈনিক automatic backup পাবেন (free tier-এও কিছুদিন থাকে)। বড় পরিসরে ব্যবহার করলে Supabase-এর paid plan-এ point-in-time recovery পাওয়া যায়।
-- **খরচ:** Supabase আর Vercel দুটোরই Free tier একটা ছোট মেসের জন্য যথেষ্ট। ইউজার/ডেটা অনেক বাড়লে তখন paid plan ভাবা যাবে।
+| Role | কীভাবে পাবে | কী করতে পারবে |
+|---|---|---|
+| **Owner (Super Admin)** | Setup-এর সময় যিনি অ্যাকাউন্ট বানিয়েছেন | সব দেখা + সব এডিট + Mess Name বদল + Settings |
+| **এই মাসের Manager** | Monthly Summary পেজ থেকে assign করা হলে | সব দেখা + Member/Meal/Bazar/Deposit এডিট (Settings/Mess-name বাদে) |
+| **বাকি সব Member** | নিজের ফোন+password দিয়ে লগিন | শুধু দেখা (View Only) — কিছু এডিট/ডিলিট করতে পারবে না |
+
+Manager assignment মাস বদলালে (বা নতুন করে assign করলে) অটোমেটিক আপডেট হয় — কাউকে ম্যানুয়ালি কিছু করতে হয় না।
+
+---
+
+## নতুন যা যা যোগ হলো এই আপডেটে
+
+- **Join-date validation**: কোনো member-এর যোগদানের তারিখের আগের কোনো দিনে তার মিল যোগ করা যাবে না (Daily Meal Entry পেজে অটো হাইড হয়ে যাবে)।
+- **Duplicate-key বাগ ফিক্স**: একসাথে একাধিক নতুন member-এর মিল Save করলে যে "duplicate key" এরর আসতো, সেটার আসল কারণ ছিল ID generation-এর বাগ (একই batch-এ সবাইকে ভুল করে একই ID দেওয়া হতো) — মিলের ভ্যালু একই হওয়া কখনোই সমস্যা ছিল না, এখন ঠিক করা হয়েছে।
+- **Month-end Carry Forward**: Dashboard-এ ব্যানার দেখাবে যদি আগের মাসের ব্যালেন্স এখনো পরের মাসে transfer করা না থাকে — এক ক্লিকে সবার +/- ব্যালেন্স next month-এর deposit হিসেবে বসে যাবে। (সম্পূর্ণ silent-automatic না, যেহেতু static site-এ real cron job নেই — Owner/Manager লগিন করলে prompt দেখাবে।)
+- **Deposit-এ শূন্য/ঋণাত্মক amount**: এখন অনুমোদিত (carry-forward-এর জন্য দরকার ছিল)।
+- **Bazar "Bought By" এখন dropdown**, আর একটা ছোট **item-list builder** যোগ হয়েছে — একটা একটা আইটেম (নাম+দাম) যোগ করলে Amount আর Notes অটো বসে যায়।
+- **Per-member Login** (ফোন+Password), Role-based access, **Logout বাটন**।
+- **PWA**: এখন হোমস্ক্রিনে "Meal Tracker" নামে অ্যাপের মতো ইনস্টল করা যাবে (Chrome/Safari-তে "Add to Home Screen" / "Install App" অপশন আসবে)।
+
+---
+
+## নিরাপত্তা নিয়ে honest কথা
+
+Login পুরোপুরি app-এর ভেতরে (browser-এ) চেক হয় — Supabase Row Level Security পুরোপুরি খোলা। Password হ্যাশ (SHA-256) করে রাখা হয় প্লেইন-টেক্সটের বদলে, কিন্তু এটা সত্যিকারের bcrypt/Argon2-এর মতো শক্তিশালী না, আর RLS policy খোলা থাকায় Supabase URL+key জানলে কেউ login screen এড়িয়ে সরাসরি API কল করতে পারবে। ছোট মেসের রোজকার হিসাবের জন্য এটা সাধারণত যথেষ্ট। সত্যিকারের সংবেদনশীল ডেটার জন্য Supabase Auth দিয়ে আরও শক্ত করা যায় — দরকার হলে বলবেন।
+
+## Backup
+Supabase Dashboard → Database → Backups-এ দৈনিক automatic backup পাবেন (free tier-এও কিছুদিন থাকে)।

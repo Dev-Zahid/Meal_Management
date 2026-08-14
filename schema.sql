@@ -1,14 +1,15 @@
 -- ═══════════════════════════════════════════════════════════════
--- মেস খাতা — Supabase schema
+-- মেস খাতা / Meal Tracker — Supabase schema (v2 — per-member login)
+-- এইটা একদম নতুন Supabase প্রজেক্টের জন্য। আগে v1 schema রান করে থাকলে,
+-- এটা না চালিয়ে migration.sql চালান।
 -- Supabase Dashboard → SQL Editor → New query → পুরোটা পেস্ট করে Run করুন
 -- ═══════════════════════════════════════════════════════════════
 
--- Single-row settings table (mess name, PINs, theme)
+-- Single-row settings table (mess name, owner, theme)
 create table if not exists settings (
   id int primary key default 1,
   mess_name text not null default '',
-  admin_pin text not null default '',
-  viewer_pin text not null default '',
+  owner_member_id text,
   theme text not null default 'light',
   setup_done boolean not null default false,
   constraint settings_singleton check (id = 1)
@@ -19,6 +20,7 @@ create table if not exists members (
   id text primary key,
   name text not null,
   phone text default '',
+  password_hash text not null default '',
   status text not null default 'Active',
   joined date,
   left_date date,
@@ -57,7 +59,7 @@ create table if not exists deposits (
   date date not null,
   member_id text not null,
   member_name text not null,
-  amount numeric not null,
+  amount numeric not null,  -- negative allowed (e.g. month-end carry-forward due)
   method text default 'Cash',
   notes text default ''
 );
@@ -73,13 +75,15 @@ create table if not exists managers (
 -- their old meal/deposit history intact (same as before).
 
 -- ─── Row Level Security ────────────────────────────────────────
--- The app checks the Manager/Member PIN in the browser, not via Supabase
--- Auth. So every table is opened to the "anon" key used by the app.
--- This means anyone with your site's URL could, in theory, call the
--- Supabase API directly and bypass the PIN screen (the PIN is a UX gate,
--- not a cryptographic lock) — same trust model as the PIN already had.
--- Keep your Supabase project URL/anon-key out of anywhere untrusted,
--- and don't put real financial/sensitive data you can't afford to leak.
+-- The app checks login (phone+password) and role (Owner / this month's
+-- Manager / everyone else view-only) in the browser, not via Supabase Auth.
+-- So every table is opened to the "anon" key used by the app. This means
+-- anyone with your site's URL could, in theory, call the Supabase API
+-- directly and bypass the login screen (the login is a UX gate, not a
+-- cryptographic lock enforced by the database). Passwords are hashed
+-- (SHA-256) before being stored/compared, but that's still weaker than
+-- real server-side auth. Keep your Supabase URL/anon-key private, and
+-- don't put real financial/sensitive data you can't afford to leak.
 alter table settings enable row level security;
 alter table members enable row level security;
 alter table meal_entries enable row level security;

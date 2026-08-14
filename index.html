@@ -3,7 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>মেস খাতা — Meal Manager</title>
+<title>Meal Tracker — মেস খাতা</title>
+<meta name="description" content="মেসের দৈনিক মিল, বাজার খরচ, ডিপোজিট আর মাসিক হিসাব রাখার অ্যাপ">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1F6F54">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Meal Tracker">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
@@ -18,30 +26,35 @@
   <div class="screen-card">
     <div class="screen-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18a9 9 0 0 1-18 0z"/><path d="M7 12c0-2 .8-4 .8-6M12 12c0-3 .3-5 .3-7M17 12c0-2-.8-4-.8-6"/></svg></div>
     <h1>মেস খাতা-য় স্বাগতম</h1>
-    <p class="sub">নতুন এই খাতা শুরু করার আগে মেসের নাম আর একটা Manager PIN সেট করুন — এই PIN দিয়েই সব এডিট করতে পারবেন।</p>
+    <p class="sub">নতুন এই খাতা শুরু করার আগে মেসের নাম আর আপনার (Owner/Super Admin) অ্যাকাউন্ট বানান — এই অ্যাকাউন্ট দিয়ে সবসময় সব এডিট করতে পারবেন আর মেসের নাম বদলাতে/সেটিংস দেখতে পারবেন।</p>
     <div class="fg"><label>মেসের নাম</label><input type="text" id="su-name" placeholder="যেমনঃ Green Valley Mess"></div>
-    <div class="fg"><label>Manager PIN (৪-৬ সংখ্যা)</label><input type="password" id="su-pin" inputmode="numeric" maxlength="6" placeholder="••••"></div>
+    <div class="fg"><label>আপনার নাম</label><input type="text" id="su-owner-name" placeholder="আপনার নাম"></div>
+    <div class="fr2">
+      <div class="fg"><label>ফোন নম্বর</label><input type="tel" id="su-owner-phone" placeholder="01XXXXXXXXX"></div>
+      <div class="fg"><label>Password</label><input type="password" id="su-owner-pass" placeholder="একটা Password দিন"></div>
+    </div>
     <div id="su-err" class="err-box"></div>
     <button class="btn primary block" id="su-btn" onclick="doSetup()">খাতা তৈরি করুন</button>
   </div>
 </div>
 
-<!-- ══ LOGIN SCREEN (normal form — not a numpad) ══ -->
+<!-- ══ LOGIN SCREEN (phone + password — normal login form) ══ -->
 <div class="screen" id="login-screen" style="display:none">
   <div class="screen-card">
     <div class="screen-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18a9 9 0 0 1-18 0z"/><path d="M7 12c0-2 .8-4 .8-6M12 12c0-3 .3-5 .3-7M17 12c0-2-.8-4-.8-6"/></svg></div>
     <h1 id="login-title">মেস খাতা</h1>
-    <p class="sub" id="login-sub">লগিন করতে আপনার PIN দিন।</p>
+    <p class="sub" id="login-sub">লগিন করতে আপনার ফোন নম্বর ও Password দিন।</p>
+    <div class="fg"><label>ফোন নম্বর</label><input type="tel" id="login-phone" placeholder="01XXXXXXXXX" onkeydown="if(event.key==='Enter')document.getElementById('login-pass').focus()"></div>
     <div class="fg">
-      <label>PIN</label>
+      <label>Password</label>
       <div style="position:relative">
-        <input type="password" id="login-pin" inputmode="numeric" maxlength="6" placeholder="PIN দিন" onkeydown="if(event.key==='Enter')doLogin()" style="padding-right:44px">
+        <input type="password" id="login-pass" placeholder="Password দিন" onkeydown="if(event.key==='Enter')doLogin()" style="padding-right:44px">
         <button type="button" class="btn icon ghost sm" onclick="togglePinVisibility()" style="position:absolute;right:4px;top:4px" id="pin-eye" title="দেখুন/লুকান"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></button>
       </div>
     </div>
     <div id="login-err" class="err-box"></div>
     <button class="btn primary block" id="login-btn" onclick="doLogin()">লগিন করুন</button>
-    <p class="hint" style="margin-top:14px;text-align:center">Manager PIN দিলে সব এডিট করতে পারবেন। Member PIN দিলে শুধু দেখতে পারবেন।</p>
+    <p class="hint" style="margin-top:14px;text-align:center">সবাই লগিন করে সব দেখতে পারবেন। এডিট করার অ্যাক্সেস শুধু Owner আর এই মাসের assigned Manager-এর কাছে থাকবে।</p>
   </div>
 </div>
 
@@ -67,7 +80,9 @@
       <button class="sb-item" data-page="settings" onclick="goTo('settings')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2.1" fill="var(--surface)"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2.1" fill="var(--surface)"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="7.5" cy="18" r="2.1" fill="var(--surface)"/></svg>Settings</button>
     </nav>
     <div class="sb-foot">
+      <div id="sb-whoami" style="font-size:12px;color:var(--muted);margin-bottom:9px;display:flex;align-items:center;gap:8px"></div>
       <button class="btn ghost block" onclick="toggleTheme()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.3A8.4 8.4 0 1 1 9.7 4a6.8 6.8 0 0 0 10.3 10.3z"/></svg><span id="theme-lab">Dark Mode</span></button>
+      <button class="btn ghost block" onclick="doLogout()" style="margin-top:7px;color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Logout</button>
     </div>
   </aside>
 
@@ -87,6 +102,7 @@
 
       <!-- ══ DASHBOARD ══ -->
       <section class="page on" data-page="dashboard">
+        <div id="cf-banner"></div>
         <div class="grid cols-4" id="dash-stats" style="margin-bottom:16px"></div>
         <div class="two-col">
           <div class="card">
@@ -227,25 +243,14 @@
         <div class="grid cols-2">
           <div class="card">
             <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5 4 4h16l1 5.5"/><path d="M3 9.5a2.6 2.6 0 0 0 5.2 0 2.6 2.6 0 0 0 5.2 0 2.6 2.6 0 0 0 5.2 0 2.6 2.6 0 0 0 4.4 1.9"/><path d="M5 10v10.2h14V10"/></svg>Mess Info</h3></div>
+            <p class="hint" style="margin-bottom:12px">শুধু Owner (Super Admin) মেসের নাম বদলাতে পারবেন — এই মাসের Manager-ও পারবেন না।</p>
             <div class="fg"><label>Mess Name</label><input type="text" id="set-messname"></div>
             <button class="btn primary" onclick="saveMessInfo()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>Save</button>
           </div>
           <div class="card">
-            <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2.2"/><path d="M7 11V8a5 5 0 0 1 10 0v3"/></svg>Access PINs</h3></div>
-            <p class="hint" style="margin-bottom:12px">Manager PIN দিয়ে লগিন করলে সব এডিট করা যায়। Member PIN (চাইলে সেট করুন) দিয়ে লগিন করলে শুধু দেখা যায় — কিছু বদলানো যায় না।</p>
-            <div class="fg"><label>Manager PIN বদলান</label><input type="password" id="set-admin-pin" maxlength="6" inputmode="numeric" placeholder="নতুন ৪-৬ সংখ্যা"></div>
-            <div class="fg"><label>Member (View-Only) PIN</label><input type="password" id="set-viewer-pin" maxlength="6" inputmode="numeric" placeholder="খালি রাখলে বন্ধ থাকবে"></div>
-            <button class="btn primary" onclick="savePins()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>PIN Save করুন</button>
-          </div>
-          <div class="card">
             <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l4 3 5-6.5 5 6.5 4-3-2.1 11.5H5.1z"/></svg>Manager Roster</h3></div>
-            <p class="hint" style="margin-bottom:10px">সব মাসের Manager অ্যাসাইনমেন্ট এখানে দেখা যাবে। বদলাতে Monthly Summary পেজে যান।</p>
-            <div id="set-managers-list" style="max-height:180px;overflow-y:auto"></div>
-          </div>
-          <div class="card">
-            <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M6 7l1 13.2a2 2 0 0 0 2 1.8h6a2 2 0 0 0 2-1.8L18 7"/><path d="M9.5 7V4.3h5V7"/></svg>Danger Zone</h3></div>
-            <p class="hint" style="margin-bottom:12px">এতে সব Member, Meal, Bazar, Deposit ডেটা চিরতরে মুছে যাবে। এই কাজ Undo করা যায় না।</p>
-            <button class="btn sm danger" onclick="resetAllData()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M6 7l1 13.2a2 2 0 0 0 2 1.8h6a2 2 0 0 0 2-1.8L18 7"/><path d="M9.5 7V4.3h5V7"/></svg>সব ডেটা মুছে ফেলুন</button>
+            <p class="hint" style="margin-bottom:10px">সব মাসের Manager অ্যাসাইনমেন্ট এখানে দেখা যাবে। বদলাতে Monthly Summary পেজে যান। যে মাসে যাকে Manager করা হবে, সে ঐ মাসে অটোমেটিক এডিট অ্যাক্সেস পেয়ে যাবে।</p>
+            <div id="set-managers-list" style="max-height:220px;overflow-y:auto"></div>
           </div>
         </div>
       </section>
@@ -265,6 +270,7 @@
         <div class="fg"><label>Status</label><select id="mm-status"><option>Active</option><option>Inactive</option><option>Left</option></select></div>
       </div>
       <div class="fg"><label>Joined Date</label><input type="date" id="mm-joined"></div>
+      <div class="fg"><label id="mm-pass-label">Login Password</label><input type="password" id="mm-password" placeholder="Password দিন যাতে সে লগিন করতে পারে"><p class="hint" id="mm-pass-hint" style="margin-top:4px"></p></div>
       <div class="fg"><label>Notes</label><input type="text" id="mm-notes" placeholder="Optional"></div>
     </div>
     <div class="m-foot"><button class="btn" onclick="closeM('ov-member')">বাতিল</button><button class="btn primary" id="save-mem" onclick="saveMember()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>Save</button></div>
@@ -275,9 +281,23 @@
   <div class="modal">
     <div class="m-head"><h3>Add Bazar Expense</h3><button class="btn icon ghost" onclick="closeM('ov-bazar')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
     <div class="m-body">
-      <div class="fr2"><div class="fg"><label>Date</label><input type="date" id="bzd"></div><div class="fg"><label>Bought By</label><input type="text" id="bzby"></div></div>
-      <div class="fg"><label>Amount *</label><input type="number" id="bzamt" placeholder="500"></div>
-      <div class="fg"><label>Notes</label><input type="text" id="bznote" placeholder="Optional"></div>
+      <div class="fr2"><div class="fg"><label>Date</label><input type="date" id="bzd"></div><div class="fg"><label>Bought By</label><select id="bzby" onchange="toggleBzbyOther()"></select></div></div>
+      <div class="fg" id="bzby-other-wrap" style="display:none"><label>নাম লিখুন</label><input type="text" id="bzby-other" placeholder="যার নাম লিস্টে নেই"></div>
+
+      <div class="fg">
+        <label>বাজারের লিস্ট (optional — একটা একটা আইটেম যোগ করুন, Amount ও Notes নিজে থেকে বসে যাবে)</label>
+        <div class="fr2" style="align-items:end">
+          <div class="fg" style="margin-bottom:0"><input type="text" id="bzitem-name" placeholder="যেমনঃ চাল ৫ কেজি" onkeydown="if(event.key==='Enter'){event.preventDefault();addBazarItem();}"></div>
+          <div style="display:flex;gap:8px">
+            <input type="number" id="bzitem-amt" placeholder="৳" style="width:90px" onkeydown="if(event.key==='Enter'){event.preventDefault();addBazarItem();}">
+            <button type="button" class="btn icon primary" onclick="addBazarItem()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+          </div>
+        </div>
+        <div id="bzitem-list" style="margin-top:8px;display:flex;flex-direction:column;gap:6px"></div>
+      </div>
+
+      <div class="fg"><label>Amount * (মোট)</label><input type="number" id="bzamt" placeholder="500"></div>
+      <div class="fg"><label>Notes</label><textarea id="bznote" rows="2" placeholder="আইটেম যোগ করলে এখানে অটো লিস্ট হবে, চাইলে বদলাতে পারেন"></textarea></div>
     </div>
     <div class="m-foot"><button class="btn" onclick="closeM('ov-bazar')">বাতিল</button><button class="btn primary" id="save-bz" onclick="saveBazar()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>Save</button></div>
   </div>
