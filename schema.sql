@@ -36,6 +36,7 @@ create table if not exists members (
   inactive_from date,   -- এই তারিখ থেকে
   inactive_to date,     -- এই তারিখ পর্যন্ত মেম্বার Inactive থাকবে (মিল বন্ধ, Daily Meal Entry-তে আসবে না)
   in_other_fund boolean not null default true, -- false হলে এই member Other Expenses ভাগ করবে না/সেই লিস্টে থাকবে না
+  in_meal_fund boolean not null default true,  -- false হলে এই member Daily Meal Entry-তে দেখাবে না / মিলের হিসাবে ধরা হবে না (কিন্তু Other Fund-এ থাকতে পারে — যেমন যে মিল খায় না কিন্তু গ্যাস/বিদ্যুৎ বিলে ভাগ দেয়)
   notes text default ''
 );
 -- ফোন নম্বর পুরো প্ল্যাটফর্ম জুড়ে ইউনিক (লগিনের সময় মেস আলাদাভাবে বাছাই করা লাগবে না)

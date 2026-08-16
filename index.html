@@ -56,25 +56,27 @@
     <div id="login-err" class="err-box"></div>
     <button class="btn primary block" id="login-btn" onclick="doLogin()">লগিন করুন</button>
     <p class="hint" style="margin-top:14px;text-align:center">সবাই লগিন করে সব দেখতে পারবেন। এডিট করার অ্যাক্সেস শুধু Owner আর এই মাসের assigned Manager-এর কাছে থাকবে।</p>
-    <div style="display:flex;justify-content:center;gap:16px;margin-top:16px;font-size:12.5px">
+    <div style="display:flex;justify-content:center;margin-top:16px;font-size:12.5px">
       <a href="javascript:void(0)" onclick="openSetupScreen()" style="color:var(--primary)">নতুন মেস তৈরি করুন</a>
-      <a href="javascript:void(0)" id="sa-entry-link" onclick="openSuperAdminScreen()" style="color:var(--muted)" data-exists="0">Super Admin</a>
     </div>
   </div>
 </div>
 
-<!-- ══ SUPER ADMIN LOGIN / FIRST-RUN CREATE SCREEN ══ -->
+<!-- ══ FIRST-EVER RUN: create the one Platform Super Admin account ══
+     Shown automatically by boot() only when platform_admins is empty.
+     After that, this Super Admin logs in through the normal login form
+     above like everyone else — there's no separate ongoing "Super Admin
+     login" screen. ══ -->
 <div class="screen" id="sa-login-screen" style="display:none">
   <div class="screen-card">
     <div class="screen-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6l8-4z"/></svg></div>
-    <h1 id="sa-mode-title">Super Admin লগিন</h1>
-    <p class="sub" id="sa-mode-sub">আপনার Super Admin ফোন নম্বর ও Password দিন।</p>
-    <div class="fg" id="sa-name-wrap" style="display:none"><label>নাম</label><input type="text" id="sa-name" placeholder="আপনার নাম"></div>
+    <h1>প্রথম Super Admin অ্যাকাউন্ট বানান</h1>
+    <p class="sub">এখনো কোনো Super Admin নেই — এটাই প্রথমবার। নিচের ফর্ম দিয়ে একবারই এই অ্যাকাউন্ট বানিয়ে নিন; এরপর থেকে সবসময় সাধারণ লগিন ফর্ম দিয়েই এই ফোন নম্বর+Password দিয়ে ঢুকতে পারবেন।</p>
+    <div class="fg"><label>নাম</label><input type="text" id="sa-name" placeholder="আপনার নাম"></div>
     <div class="fg"><label>ফোন নম্বর</label><input type="tel" id="sa-phone" placeholder="01XXXXXXXXX"></div>
     <div class="fg"><label>Password</label><input type="password" id="sa-pass" placeholder="Password দিন"></div>
     <div id="sa-err" class="err-box"></div>
-    <button class="btn primary block" id="sa-btn" onclick="platformAdminLogin()">লগিন করুন</button>
-    <button class="btn ghost block" onclick="backToLogin()" style="margin-top:8px">← লগিন স্ক্রিনে ফিরে যান</button>
+    <button class="btn primary block" id="sa-btn" onclick="createFirstPlatformAdmin()">তৈরি করুন</button>
   </div>
 </div>
 
@@ -93,7 +95,7 @@
       <div class="card-h" style="margin-bottom:12px"><h3>সব মেস</h3>
         <input type="text" placeholder="মেস খুঁজুন..." oninput="saMessSearch(this.value)" style="max-width:220px;margin-left:auto">
       </div>
-      <div class="table-wrap"><table>
+      <div class="tblwrap"><table class="rtbl">
         <thead><tr><th>Mess</th><th class="num">Members</th><th class="num">Active</th><th class="num">এই মাসের Meal</th><th class="num">এই মাসের বাজার</th><th>তৈরি</th><th></th></tr></thead>
         <tbody id="sa-mess-body"></tbody>
       </table></div>
@@ -251,9 +253,7 @@
         </table></div></div>
 
         <div class="card-h" style="margin-bottom:10px"><h3>Other Fund টাকা কালেকশন</h3>
-          <select id="ot-dep-mon-f" onchange="renderOther()" style="margin-left:auto"><option value="">সব মাস</option></select>
-          <input type="number" id="ot-dep-yr-f" placeholder="Year" style="width:90px" onchange="renderOther()">
-          <button class="btn sm primary" onclick="openOtherDepositModal()" id="ot-dep-add-btn">+ Add Deposit</button>
+          <button class="btn sm primary" style="margin-left:auto" onclick="openOtherDepositModal()" id="ot-dep-add-btn">+ Add Deposit</button>
         </div>
         <div class="grid cols-2" id="ot-fund-cards" style="margin-bottom:14px"></div>
         <div class="card pad-0" style="margin-bottom:22px"><div class="tblwrap"><table class="rtbl">
@@ -261,7 +261,7 @@
           <tbody id="ot-dep-body"></tbody>
         </table></div></div>
 
-        <div class="card-h" style="margin-bottom:10px"><h3>Member-ভিত্তিক Other Fund হিসাব (এই মাস)</h3></div>
+        <div class="card-h" style="margin-bottom:10px"><h3 id="ot-member-title">Member-ভিত্তিক Other Fund হিসাব</h3></div>
         <div class="card pad-0"><div class="tblwrap"><table class="rtbl">
           <thead><tr><th>Member</th><th>Share</th><th>Deposit</th><th>Balance</th><th>Status</th></tr></thead>
           <tbody id="ot-member-body"></tbody>
@@ -341,11 +341,17 @@
         <p class="hint" style="margin-top:4px">এই তারিখ থেকে এই তারিখ পর্যন্ত মেম্বার Inactive থাকবে — মিল বন্ধ থাকবে ও Daily Meal Entry-তে তার নাম আসবে না। খালি রাখলে সবসময় Active হিসেবে গণ্য হবে।</p>
       </div>
       <div class="fg">
+        <label>Member Type</label>
+        <p class="hint" style="margin-bottom:6px">কিছু member মিল খায় না কিন্তু গ্যাস/বিদ্যুৎ-এর মতো Other Expense-এ ভাগ দেয় — তাদের জন্য নিচের "Meal Fund" আনচেক করুন। সাধারণত দুটোই checked রাখুন।</p>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:500;color:var(--ink);margin-bottom:8px">
+          <input type="checkbox" id="mm-meal-fund" style="width:16px;height:16px;flex-shrink:0" checked>
+          Meal Fund-এ থাকবে (Daily Meal Entry-তে দেখাবে)
+        </label>
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:500;color:var(--ink)">
           <input type="checkbox" id="mm-other-fund" style="width:16px;height:16px;flex-shrink:0" checked>
           Other Expenses Fund-এ থাকবে
         </label>
-        <p class="hint" style="margin-top:4px">আনচেক করলে এই member Other Expenses পেজের টাকা-কালেকশন ও ভাগের হিসাব থেকে বাদ থাকবে (যেমন কেউ ওয়াইফাই/গ্যাস ব্যবহার না করলে)। Meal-এর হিসাবে কোনো প্রভাব পড়বে না।</p>
+        <p class="hint" style="margin-top:4px">দুটো ফান্ড সম্পূর্ণ স্বাধীন — চাইলে দুটোই, একটা, বা কোনোটাই বেছে নিতে পারেন।</p>
       </div>
       <div class="fg"><label id="mm-pass-label">Login Password</label><input type="password" id="mm-password" placeholder="Password দিন যাতে সে লগিন করতে পারে"><p class="hint" id="mm-pass-hint" style="margin-top:4px"></p></div>
       <div class="fg"><label>Notes</label><input type="text" id="mm-notes" placeholder="Optional"></div>

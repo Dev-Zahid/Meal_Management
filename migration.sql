@@ -34,6 +34,7 @@ alter table members alter column mess_id set not null;
 alter table members add column if not exists inactive_from date;
 alter table members add column if not exists inactive_to date;
 alter table members add column if not exists in_other_fund boolean not null default true;
+alter table members add column if not exists in_meal_fund boolean not null default true;
 create unique index if not exists members_phone_unique on members(phone) where phone <> '';
 create index if not exists members_mess_idx on members(mess_id);
 
@@ -83,10 +84,15 @@ create policy "public read/write" on platform_admins for all using (true) with c
 -- ═══════════════════════════════════════════════════════════════
 -- এরপর কী করবেন:
 -- • app.js/index.html/style.css নতুন ভার্সন দিয়ে redeploy করুন।
--- • লগিন স্ক্রিনে নিচে "Super Admin" লিংকে ক্লিক করে প্রথম Super Admin
---   অ্যাকাউন্ট বানিয়ে নিন (phone + password) — platform_admins টেবিল
---   খালি থাকলে অ্যাপ নিজেই "Create Super Admin" ফর্ম দেখাবে।
+-- • প্রথমবার সাইট খুললে platform_admins টেবিল খালি থাকলে app নিজে থেকেই
+--   "প্রথম Super Admin অ্যাকাউন্ট বানান" স্ক্রিন দেখাবে (phone + password)।
+--   এরপর থেকে এই Super Admin সাধারণ লগিন ফর্ম দিয়েই ঢুকতে পারবেন — আলাদা
+--   কোনো "Super Admin" লিংক/স্ক্রিন নেই।
 -- • আপনার আগের মেস এখন mess_id = 'MS-001' হিসেবে চলবে, সব সদস্য/মিল/
 --   বাজার/ডিপোজিট ইতিহাস অক্ষত আছে। আগের মতোই ফোন+Password দিয়ে লগিন
 --   করতে পারবেন।
+-- • নতুন "Other Fund-শুধু" member (যে মিল খায় না কিন্তু বাজার-বহির্ভূত
+--   খরচে ভাগ দেয়) যোগ করতে Members পেজে Add Member-এ "Member Type"-এ
+--   "শুধু Other Expense" বাছুন — আগের সব member ডিফল্টভাবে দুই ফান্ডেই
+--   থাকবে (in_meal_fund ও in_other_fund দুটোই true)।
 -- ═══════════════════════════════════════════════════════════════
