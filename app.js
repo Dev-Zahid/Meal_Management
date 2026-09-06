@@ -114,7 +114,7 @@ function genId(prefix){
 }
 
 async function loadState(messId){
-  const [s,mem,meals,bazar,other,dep,mgrs]=await Promise.all([
+  const [s,mem,meals,bazar,other,dep,mgrs,dn]=await Promise.all([
     supa.from('messes').select('*').eq('id',messId).maybeSingle(),
     supa.from('members').select('*').eq('mess_id',messId),
     supa.from('meal_entries').select('*').eq('mess_id',messId),
@@ -122,8 +122,9 @@ async function loadState(messId){
     supa.from('other_expenses').select('*').eq('mess_id',messId),
     supa.from('deposits').select('*').eq('mess_id',messId),
     supa.from('managers').select('*').eq('mess_id',messId),
+    supa.from('day_notes').select('*').eq('mess_id',messId),
   ]);
-  const firstErr=[s,mem,meals,bazar,other,dep,mgrs].find(r=>r.error);
+  const firstErr=[s,mem,meals,bazar,other,dep,mgrs,dn].find(r=>r.error);
   if(firstErr){ toast('Database connect করা যায়নি: '+firstErr.error.message,'er'); return null; }
   return {
     messId,
@@ -136,8 +137,11 @@ async function loadState(messId){
     otherExp:(other.data||[]).map(r=>({id:r.id,date:r.date,title:r.title,amount:Number(r.amount),notes:r.notes||''})),
     deposits:(dep.data||[]).map(r=>({id:r.id,date:r.date,mid:r.member_id,name:r.member_name,amount:Number(r.amount),method:r.method||'Cash',type:r.type||'Meal',notes:r.notes||''})),
     managers:(mgrs.data||[]).map(r=>({monthYear:r.month_year,mid:r.member_id,name:r.member_name})),
+    // প্রতিদিনের ঐচ্ছিক নোট — যেমন "বাজার হয়নি তাই মিল বন্ধ", "রান্নার লোক অনুপস্থিত" ইত্যাদি
+    dayNotes:(dn.data||[]).map(r=>({date:r.date,note:r.note||''})),
   };
 }
+function dayNoteFor(dateISO){ const r=(STATE.dayNotes||[]).find(x=>x.date===dateISO); return r?r.note:''; }
 // Runs a Supabase write and shows a toast on failure. Returns true/false.
 async function dbOp(promise,failMsg){
   const {error}=await promise;
@@ -168,6 +172,55 @@ async function hashPassword(pw){
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
 }
 
+/* ── Persistent login session (localStorage) ─────────────────────
+   আগে লগিন-এর তথ্য শুধু মেমোরিতে (JS variable) থাকত, কোথাও সেভ হতো না —
+   তাই ব্রাউজার/অ্যাপ কয়েক সেকেন্ডের জন্য background-এ গেলেও (মোবাইলে এটা
+   প্রায়ই পেজ reload করে দেয়) সব হারিয়ে আবার লগিন করা লাগত। এখন সফল লগিনের
+   পর মেস+মেম্বার (বা Platform Admin) আইডি localStorage-এ রাখা হয়, আর
+   boot()-এর শুরুতেই সেটা থাকলে পাসওয়ার্ড না চেয়েই সরাসরি আগের সেশনে
+   ফিরিয়ে নেওয়া হয়। Logout করলে এটা মুছে যায়।
+   ═══════════════════════════════════════════════════════════ */
+const SESSION_KEY='meskhata_session_v1';
+function saveSession(obj){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(obj)); }catch(e){ /* localStorage বন্ধ থাকলেও অ্যাপ চলবে, শুধু সেশন মনে রাখবে না */ } }
+function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+function loadSession(){ try{ const raw=localStorage.getItem(SESSION_KEY); return raw?JSON.parse(raw):null; }catch(e){ return null; } }
+async function restoreSession(){
+  const sess=loadSession();
+  if(!sess)return false;
+  if(sess.type==='platform_admin'){
+    const {data,error}=await supa.from('platform_admins').select('*').eq('phone',sess.phone).maybeSingle();
+    if(error||!data){ clearSession(); return false; }
+    platformAdmin={phone:data.phone,name:data.name}; isPlatformAdmin=true;
+    await showSuperAdminDash();
+    return true;
+  }
+  if(sess.type==='member'){
+    STATE=await loadState(sess.messId);
+    if(!STATE){ clearSession(); return false; }
+    const row=STATE.members.find(m=>m.id===sess.memberId);
+    if(!row){ clearSession(); return false; }
+    currentMessId=sess.messId; currentMember=row;
+    isSuperAdmin=(STATE.settings.ownerMemberId===row.id);
+    const mgr=managerFor(curMon(),curYr());
+    isMonthManager=!!(mgr&&mgr.mid===row.id);
+    isAdmin=isSuperAdmin||isMonthManager;
+    isPlatformAdmin=false; platformAdmin=null;
+    applyTheme();
+    showApp();
+    return true;
+  }
+  return false;
+}
+function hideBootLoading(){ const bl=document.getElementById('boot-loading'); if(bl)bl.style.display='none'; }
+function showBootError(){
+  const bl=document.getElementById('boot-loading'); if(!bl)return;
+  bl.innerHTML=`<div class="screen-card" style="text-align:center">
+    <h1>সংযোগ করা যাচ্ছে না</h1>
+    <p class="sub">সার্ভার থেকে সাড়া পেতে দেরি হচ্ছে — কয়েকদিন পর প্রথমবার অ্যাপ খুললে এমনটা হতে পারে। ইন্টারনেট চেক করে আবার চেষ্টা করুন।</p>
+    <button class="btn primary block" onclick="location.reload()">আবার চেষ্টা করুন</button>
+  </div>`;
+}
+
 window.addEventListener('load', boot);
 async function boot(){
   registerServiceWorker();
@@ -178,18 +231,28 @@ async function boot(){
     return;
   }
   document.documentElement.setAttribute('data-theme','light');
-  // Nobody has ever created a Platform Super Admin yet on this deployment —
-  // show the one-time creation screen automatically instead of the normal
-  // login. Once it exists, this never shows again; that account just logs
-  // in through the normal phone+password form like everyone else.
-  const {count}=await supa.from('platform_admins').select('*',{count:'exact',head:true});
-  if(!count){
-    document.getElementById('sa-login-screen').style.display='flex';
-    return;
+  try{
+    // আগে থেকে লগিন করা থাকলে (localStorage-এ সেশন থাকলে) সরাসরি সেই
+    // মেস/অ্যাকাউন্টে ফিরিয়ে নেওয়া হয় — পাসওয়ার্ড আবার চাওয়া হয় না।
+    const restored=await restoreSession();
+    if(restored){ hideBootLoading(); return; }
+    // Nobody has ever created a Platform Super Admin yet on this deployment —
+    // show the one-time creation screen automatically instead of the normal
+    // login. Once it exists, this never shows again; that account just logs
+    // in through the normal phone+password form like everyone else.
+    const {count,error}=await supa.from('platform_admins').select('*',{count:'exact',head:true});
+    if(error)throw error;
+    hideBootLoading();
+    if(!count){
+      document.getElementById('sa-login-screen').style.display='flex';
+      return;
+    }
+    document.getElementById('login-title').textContent='মেস খাতা';
+    document.getElementById('login-sub').textContent='লগিন করতে আপনার ফোন নম্বর ও Password দিন।';
+    document.getElementById('login-screen').style.display='flex';
+  }catch(err){
+    showBootError();
   }
-  document.getElementById('login-title').textContent='মেস খাতা';
-  document.getElementById('login-sub').textContent='লগিন করতে আপনার ফোন নম্বর ও Password দিন।';
-  document.getElementById('login-screen').style.display='flex';
 }
 function applyTheme(){
   const th=(STATE&&STATE.settings&&STATE.settings.theme)||'light';
@@ -236,10 +299,11 @@ async function doSetup(){
   setBusy('su-btn',false,'খাতা তৈরি করুন');
   if(ownerLinkOk){
     currentMessId=messId;
-    STATE={messId,settings:{messName,theme:'light',ownerMemberId:ownerId},members:[{id:ownerId,name:ownerName,phone:ownerPhone,passwordHash,status:'Active',joined:todayISO(),left:'',inactiveFrom:'',inactiveTo:'',inMealFund:true,inOtherFund:true,notes:''}],mealEntries:[],bazarExp:[],otherExp:[],deposits:[],managers:[]};
+    STATE={messId,settings:{messName,theme:'light',ownerMemberId:ownerId},members:[{id:ownerId,name:ownerName,phone:ownerPhone,passwordHash,status:'Active',joined:todayISO(),left:'',inactiveFrom:'',inactiveTo:'',inMealFund:true,inOtherFund:true,notes:''}],mealEntries:[],bazarExp:[],otherExp:[],deposits:[],managers:[],dayNotes:[]};
     document.getElementById('setup-screen').style.display='none';
     currentMember=STATE.members[0]; isSuperAdmin=true; isMonthManager=false; isAdmin=true;
     applyTheme();
+    saveSession({type:'member',messId,memberId:ownerId});
     showApp();
   } else { err.textContent='সেটআপ সেভ করা যায়নি — Supabase schema/migration ঠিকমতো রান হয়েছে কিনা দেখুন'; err.style.display='block'; }
 }
@@ -282,6 +346,7 @@ async function doLogin(){
     platformAdmin={phone:admin.phone,name:admin.name}; isPlatformAdmin=true;
     document.getElementById('login-screen').style.display='none';
     document.getElementById('login-phone').value='';document.getElementById('login-pass').value='';
+    saveSession({type:'platform_admin',phone:admin.phone});
     showSuperAdminDash();
     return;
   }
@@ -306,9 +371,10 @@ async function doLogin(){
   applyTheme();
   document.getElementById('login-screen').style.display='none';
   document.getElementById('login-phone').value='';document.getElementById('login-pass').value='';
+  saveSession({type:'member',messId:currentMessId,memberId:currentMember.id});
   showApp();
 }
-function doLogout(){ location.reload(); }
+function doLogout(){ clearSession(); location.reload(); }
 
 /* ═══════════════════════════════════════════════════════════
    PLATFORM SUPER ADMIN — separate from a mess's own Owner. Controls
@@ -331,9 +397,9 @@ async function createFirstPlatformAdmin(){
   const passwordHash=await hashPassword(pass);
   const ok=await dbOp(supa.from('platform_admins').insert({phone,name,password_hash:passwordHash}),'Super Admin অ্যাকাউন্ট তৈরি করা যায়নি');
   setBusy('sa-btn',false,'তৈরি করুন');
-  if(ok){ platformAdmin={phone,name}; isPlatformAdmin=true; document.getElementById('sa-login-screen').style.display='none'; showSuperAdminDash(); }
+  if(ok){ platformAdmin={phone,name}; isPlatformAdmin=true; document.getElementById('sa-login-screen').style.display='none'; saveSession({type:'platform_admin',phone}); showSuperAdminDash(); }
 }
-function saLogout(){ location.reload(); }
+function saLogout(){ clearSession(); location.reload(); }
 /* ── Change my own password ───────────────────────────────── */
 function openChangePasswordModal(){
   document.getElementById('cp-old').value='';document.getElementById('cp-new').value='';document.getElementById('cp-confirm').value='';
@@ -460,8 +526,22 @@ function showApp(fromSuperAdmin){
   document.getElementById('sm-mon').innerHTML=MONTHS.map(m=>`<option>${m}</option>`).join('');
   document.getElementById('sm-mon').value=curMon();
   document.getElementById('sm-yr').value=curYr();
-  ['bz-mon-f','ot-mon-f','dep-mon-f','ot-dep-mon-f'].forEach(id=>{
-    document.getElementById(id).innerHTML='<option value="">সব</option>'+MONTHS.map(m=>`<option>${m}</option>`).join('');
+  // NOTE: 'ot-dep-mon-f' used to be a real element (a separate month filter
+  // for the Other-Fund deposit list) but was removed from index.html when
+  // that list was merged into the Other Expenses page's single month filter
+  // (see renderOther()). It must NOT be listed here — document.getElementById
+  // would return null and crash this whole function (and everything after
+  // it: populateMemberSelects(), the sidebar setup, goTo('dashboard'), etc.)
+  // which is exactly why the app used to show a blank/half-loaded screen
+  // right after login until you manually refreshed.
+  ['bz-mon-f','ot-mon-f','dep-mon-f','me-rec-mon-f'].forEach(id=>{
+    const el=document.getElementById(id); if(!el)return;
+    el.innerHTML='<option value="">সব</option>'+MONTHS.map(m=>`<option>${m}</option>`).join('');
+    el.value=curMon();
+  });
+  ['bz-yr-f','ot-yr-f','dep-yr-f','me-rec-yr-f'].forEach(id=>{
+    const el=document.getElementById(id); if(!el)return;
+    el.value=curYr();
   });
   populateMemberSelects();
   // Settings (Mess name + Manager roster) is Super-Admin (Owner) only
@@ -616,10 +696,12 @@ function renderDash(){
     `<div class="led-row"><span style="display:flex;align-items:center;gap:9px">${avatar(m)}${escapeHtml(m.name)}</span><b style="color:var(--danger)">${money(Math.abs(s.balance))}</b></div>`).join('')
     :`<div class="empty" style="padding:20px"><p>এই মাসে কারো Due নেই 🎉</p></div>`;
 
-  const recentMeals=[...STATE.mealEntries].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
-  document.getElementById('dash-recent-meals').innerHTML=recentMeals.map(e=>`<tr><td data-label="Date">${fmtDate(e.date)}</td><td data-label="Member">${escapeHtml(e.name)}</td><td data-label="Total" class="num">${(N(e.meals)+N(e.guest)).toFixed(1).replace(/\.0$/,'')}</td></tr>`).join('')||emptyRow(3,'কোনো এন্ট্রি নেই');
-  const recentBazar=[...STATE.bazarExp].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
-  document.getElementById('dash-recent-bazar').innerHTML=recentBazar.map(e=>`<tr><td data-label="Date">${fmtDate(e.date)}</td><td data-label="By">${escapeHtml(e.by)||'—'}</td><td data-label="Amount" class="num" style="color:var(--danger);font-weight:700">${money(e.amount)}</td></tr>`).join('')||emptyRow(3,'কোনো খরচ নেই');
+  // চলতি মাসের মধ্যেই সীমাবদ্ধ — নাহলে মাসের ১ তারিখে এখনো নতুন এন্ট্রি না
+  // থাকলে আগের মাসের (যেমন ৩১ অগাস্টের) পুরনো এন্ট্রি দেখিয়ে বিভ্রান্ত করত।
+  const recentMeals=[...STATE.mealEntries].filter(e=>inMonth(e.date,mon,yr)).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
+  document.getElementById('dash-recent-meals').innerHTML=recentMeals.map(e=>`<tr><td data-label="Date">${fmtDate(e.date)}</td><td data-label="Member">${escapeHtml(e.name)}</td><td data-label="Total" class="num">${(N(e.meals)+N(e.guest)).toFixed(1).replace(/\.0$/,'')}</td></tr>`).join('')||emptyRow(3,'এই মাসে কোনো এন্ট্রি নেই');
+  const recentBazar=[...STATE.bazarExp].filter(e=>inMonth(e.date,mon,yr)).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
+  document.getElementById('dash-recent-bazar').innerHTML=recentBazar.map(e=>`<tr><td data-label="Date">${fmtDate(e.date)}</td><td data-label="By">${escapeHtml(e.by)||'—'}</td><td data-label="Amount" class="num" style="color:var(--danger);font-weight:700">${money(e.amount)}</td></tr>`).join('')||emptyRow(3,'এই মাসে কোনো খরচ নেই');
 }
 function emptyRow(cols,text){return `<tr><td colspan="${cols}" class="empty-row">${text}</td></tr>`;}
 
@@ -752,6 +834,15 @@ function loadMealGrid(){
   lab.textContent=mealSelDate===todayISO()?'আজ · '+fmtDate(mealSelDate):fmtDate(mealSelDate);
   document.getElementById('meal-quickfill').style.display=isAdmin?'':'none';
   document.getElementById('save-meal-grid').style.display=isAdmin?'':'none';
+  // এই তারিখের ঐচ্ছিক নোট (যেমনঃ বাজার হয়নি তাই মিল বন্ধ, রান্নার লোক
+  // অনুপস্থিত) — শুধু তথ্যের জন্য, সবাই দেখতে পারবে, এডিট শুধু Admin।
+  const dnEl=document.getElementById('day-note');
+  if(dnEl){
+    dnEl.value=dayNoteFor(mealSelDate);
+    dnEl.disabled=!isAdmin;
+  }
+  const dnBtn=document.getElementById('save-day-note');
+  if(dnBtn)dnBtn.style.display=isAdmin?'':'none';
   // Only members who had already joined on/before the selected date, who
   // aren't on a manager-marked inactive period covering this date, and who
   // aren't a "Other Fund only" member (in_meal_fund=false) are eligible —
@@ -824,8 +915,33 @@ async function saveMealGrid(){
     persist('মিল এন্ট্রি Save হয়েছে');
   }
 }
+// এই তারিখের ঐচ্ছিক নোট সেভ করে — কেন মিল বন্ধ ছিল ইত্যাদি মনে রাখার জন্য।
+// day_notes টেবিলে (mess_id, date) অনুযায়ী upsert হয়, মিল এন্ট্রি থেকে
+// সম্পূর্ণ আলাদা রেকর্ড (কোনো নির্দিষ্ট মেম্বারের সাথে যুক্ত না)।
+async function saveDayNote(){
+  if(!requireAdmin())return;
+  const el=document.getElementById('day-note'); if(!el)return;
+  const note=el.value.trim();
+  setBusy('save-day-note',true);
+  const ok=await dbOp(supa.from('day_notes').upsert({mess_id:currentMessId,date:mealSelDate,note},{onConflict:'mess_id,date'}),'নোট সেভ করা যায়নি');
+  setBusy('save-day-note',false,'নোট Save করুন');
+  if(ok){
+    const idx=STATE.dayNotes.findIndex(x=>x.date===mealSelDate);
+    if(idx>=0)STATE.dayNotes[idx].note=note; else STATE.dayNotes.push({date:mealSelDate,note});
+    toast('নোট সেভ হয়েছে','ok');
+  }
+}
+// Meal Entry পেজের "সাম্প্রতিক এন্ট্রি" লিস্ট — নিজের Month/Year ফিল্টার
+// আছে (ডিফল্ট: চলতি মাস), যাতে মাসের শুরুতে আগের মাসের পুরনো এন্ট্রি
+// দেখিয়ে বিভ্রান্ত না করে।
 function renderMealRecent(){
-  const list=[...STATE.mealEntries].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,40);
+  const monEl=document.getElementById('me-rec-mon-f'), yrEl=document.getElementById('me-rec-yr-f');
+  const mon=monEl?monEl.value:'', yr=yrEl?N(yrEl.value):0;
+  let list=[...STATE.mealEntries];
+  if(mon)list=list.filter(e=>{const d=new Date(e.date+'T00:00:00');return MONTHS[d.getMonth()]===mon;});
+  if(yr)list=list.filter(e=>{const d=new Date(e.date+'T00:00:00');return d.getFullYear()===yr;});
+  list=list.sort((a,b)=>b.date.localeCompare(a.date));
+  if(!mon&&!yr)list=list.slice(0,40); // "সব" বাছা থাকলে খুব বড় লিস্ট এড়াতে সাম্প্রতিক ৪০টা
   document.getElementById('meal-recent-body').innerHTML=list.map(e=>`<tr>
     <td data-label="Date">${fmtDate(e.date)}</td><td data-label="Member">${escapeHtml(e.name)}</td>
     <td data-label="Meals" class="num">${e.meals}</td><td data-label="Guest" class="num">${e.guest||0}</td>

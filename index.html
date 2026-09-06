@@ -21,6 +21,14 @@
 
 <div id="toast-root"></div>
 
+<!-- ══ BOOT LOADING (shown while connecting to Supabase; hidden once boot() knows which screen to show) ══ -->
+<div class="screen" id="boot-loading" style="display:flex">
+  <div class="screen-card" style="text-align:center">
+    <div class="spin" style="width:28px;height:28px;border-width:3px;border-color:var(--border);border-top-color:var(--primary);margin:0 auto 16px"></div>
+    <p class="sub" style="margin:0">লোড হচ্ছে...</p>
+  </div>
+</div>
+
 <!-- ══ SETUP SCREEN (create a new Mess — usable any time, not just first run) ══ -->
 <div class="screen" id="setup-screen" style="display:none">
   <div class="screen-card">
@@ -209,6 +217,11 @@
             </div>
             <div id="meal-grid"></div>
             <button class="btn primary block" id="save-meal-grid" onclick="saveMealGrid()" style="margin-top:6px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>সবার এন্ট্রি Save করুন</button>
+            <div class="fg" style="margin-top:14px;margin-bottom:0">
+              <label>এই দিনের নোট (ঐচ্ছিক) — যেমনঃ বাজার হয়নি তাই মিল বন্ধ, রান্নার লোক অনুপস্থিত</label>
+              <textarea id="day-note" rows="2" placeholder="নোট লিখুন (না থাকলে খালি রাখুন)..."></textarea>
+              <button class="btn sm" id="save-day-note" onclick="saveDayNote()" style="margin-top:4px;align-self:flex-start">নোট Save করুন</button>
+            </div>
           </div>
           <div class="card">
             <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2.2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2.5" x2="8" y2="6.5"/><line x1="16" y1="2.5" x2="16" y2="6.5"/></svg>মাসের Heatmap</h3></div>
@@ -218,6 +231,11 @@
         </div>
         <hr class="rule">
         <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8.2"/><path d="M12 8.7V13l3 2"/><path d="M9 2.3h6"/></svg>সাম্প্রতিক এন্ট্রি</h3></div>
+        <div class="fbar">
+          <label>Month:</label>
+          <select id="me-rec-mon-f" onchange="renderMealRecent()"><option value="">সব</option></select>
+          <input type="number" id="me-rec-yr-f" placeholder="Year" style="width:90px" onchange="renderMealRecent()">
+        </div>
         <div class="card pad-0"><div class="tblwrap"><table class="rtbl">
           <thead><tr><th>Date</th><th>Member</th><th>Meals</th><th>Guest</th><th>Total</th><th>Notes</th><th></th></tr></thead>
           <tbody id="meal-recent-body"></tbody>

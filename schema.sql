@@ -97,6 +97,15 @@ create table if not exists managers (
   primary key (mess_id, month_year)
 );
 
+-- প্রতিদিনের ঐচ্ছিক নোট (কোনো নির্দিষ্ট মেম্বারের সাথে যুক্ত না) — যেমনঃ
+-- "বাজার হয়নি তাই আজ মিল বন্ধ", "রান্নার লোক অনুপস্থিত" ইত্যাদি মনে রাখার জন্য।
+create table if not exists day_notes (
+  mess_id text not null,
+  date date not null,
+  note text default '',
+  primary key (mess_id, date)
+);
+
 -- NOTE: member_id columns above are plain text, NOT foreign keys.
 -- This matches the app's existing behavior — deleting a member keeps
 -- their old meal/deposit history intact (same as before).
@@ -119,6 +128,7 @@ alter table bazar_expenses enable row level security;
 alter table other_expenses enable row level security;
 alter table deposits enable row level security;
 alter table managers enable row level security;
+alter table day_notes enable row level security;
 
 create policy "public read/write" on messes for all using (true) with check (true);
 create policy "public read/write" on platform_admins for all using (true) with check (true);
@@ -128,3 +138,4 @@ create policy "public read/write" on bazar_expenses for all using (true) with ch
 create policy "public read/write" on other_expenses for all using (true) with check (true);
 create policy "public read/write" on deposits for all using (true) with check (true);
 create policy "public read/write" on managers for all using (true) with check (true);
+create policy "public read/write" on day_notes for all using (true) with check (true);

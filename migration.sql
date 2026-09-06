@@ -77,6 +77,18 @@ create policy "public read/write" on messes for all using (true) with check (tru
 drop policy if exists "public read/write" on platform_admins;
 create policy "public read/write" on platform_admins for all using (true) with check (true);
 
+-- ৫.১) নতুন টেবিল: day_notes — প্রতিদিনের ঐচ্ছিক নোট (মিল কেন বন্ধ ছিল
+-- ইত্যাদি মনে রাখার জন্য, কোনো নির্দিষ্ট মেম্বারের সাথে যুক্ত না)
+create table if not exists day_notes (
+  mess_id text not null,
+  date date not null,
+  note text default '',
+  primary key (mess_id, date)
+);
+alter table day_notes enable row level security;
+drop policy if exists "public read/write" on day_notes;
+create policy "public read/write" on day_notes for all using (true) with check (true);
+
 -- ৬) (ঐচ্ছিক) পুরনো singleton settings টেবিল আর ব্যবহার হবে না, কিন্তু
 --    নিরাপত্তার জন্য এখনই ডিলিট করা হচ্ছে না — চাইলে ম্যানুয়ালি ডিলিট করতে
 --    পারবেন: drop table if exists settings;
