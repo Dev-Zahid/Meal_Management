@@ -502,7 +502,7 @@ async function backToSuperAdminDash(){
 }
 async function deleteMess(messId,name){
   if(!confirm(`"${name}" মেসটা পুরোপুরি ডিলিট করবেন? এর সব member/meal/bazar/deposit ইতিহাস চিরতরে মুছে যাবে — এটা আর ফেরত আনা যাবে না।`))return;
-  const tables=['meal_entries','bazar_expenses','other_expenses','deposits','managers','members'];
+  const tables=['meal_entries','bazar_expenses','other_expenses','deposits','managers','day_notes','members'];
   for(const t of tables){
     const {error}=await supa.from(t).delete().eq('mess_id',messId);
     if(error){ toast(`${t} ডিলিট করা যায়নি: `+error.message,'er'); return; }
@@ -906,6 +906,18 @@ async function saveMealGrid(){
   });
   const dbRows=rows.map(r=>({id:r.id,mess_id:currentMessId,date:r.date,member_id:r.mid,member_name:r.name,meals:r.meals,guest:r.guest,notes:r.notes}));
   const ok=await dbOp(supa.from('meal_entries').upsert(dbRows,{onConflict:'member_id,date'}),'মিল এন্ট্রি সেভ করা যায়নি');
+  // দিনের নোট বক্সে কিছু লেখা থাকলে (আলাদা "নোট Save করুন" না চেপেই) এই
+  // মেইন Save বাটনের সাথে সেটাও সেভ হয়ে যাবে — নাহলে নিচের persist()→
+  // loadMealGrid() রিফ্রেশে টাইপ করা কিন্তু সেভ না-করা নোট হারিয়ে যেত।
+  const dnEl=document.getElementById('day-note');
+  if(ok&&dnEl){
+    const note=dnEl.value.trim();
+    if(note!==dayNoteFor(mealSelDate)){
+      await dbOp(supa.from('day_notes').upsert({mess_id:currentMessId,date:mealSelDate,note},{onConflict:'mess_id,date'}),'নোট সেভ করা যায়নি');
+      const idx=STATE.dayNotes.findIndex(x=>x.date===mealSelDate);
+      if(idx>=0)STATE.dayNotes[idx].note=note; else STATE.dayNotes.push({date:mealSelDate,note});
+    }
+  }
   setBusy('save-meal-grid',false,ICONS.CHECK+'সবার এন্ট্রি Save করুন');
   if(ok){
     rows.forEach(r=>{
