@@ -49,7 +49,12 @@ function cur(){return '৳';}
 function fmt(v){return N(v).toLocaleString('en-IN',{maximumFractionDigits:2});}
 function money(v){return cur()+fmt(v);}
 function fmtDate(iso){if(!iso)return '—';const d=new Date(iso+'T00:00:00');if(isNaN(d))return iso;return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});}
-function todayISO(){const d=new Date();const pad=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;}
+// Formats a Date object as a local-timezone 'YYYY-MM-DD' string. Deliberately
+// avoids d.toISOString() here — that converts to UTC first, which silently
+// shifts the date by one day in any timezone ahead of UTC (e.g. Bangladesh,
+// UTC+6): local midnight is still "yesterday evening" in UTC.
+function toLocalISODate(d){const pad=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;}
+function todayISO(){return toLocalISODate(new Date());}
 function curMon(){return MONTHS[new Date().getMonth()];}
 function curYr(){return new Date().getFullYear();}
 function daysInMonth(month,year){return new Date(year,MONTHS.indexOf(month)+1,0).getDate();}
@@ -154,7 +159,7 @@ function persist(msg){ if(msg)toast(msg,'ok'); refreshAll(); return true; }
 /* ═══════════════════════════════════════════════════════════
    BOOT
    ═══════════════════════════════════════════════════════════ */
-let curPage='dashboard', mFilterStatus='All', mSearch='', editMemberId=null, mealSelDate=todayISO();
+let curPage='dashboard', mFilterStatus='All', mFilterFund='All', mSearch='', editMemberId=null, mealSelDate=todayISO();
 let isAdmin=false;        // isSuperAdmin || isMonthManager — edit rights across data pages (within a mess)
 let isSuperAdmin=false;   // the Owner account created at setup — only role that can touch Settings (within a mess)
 let isMonthManager=false; // whoever is assigned Manager for the CURRENT month
@@ -400,6 +405,48 @@ async function createFirstPlatformAdmin(){
   if(ok){ platformAdmin={phone,name}; isPlatformAdmin=true; document.getElementById('sa-login-screen').style.display='none'; saveSession({type:'platform_admin',phone}); showSuperAdminDash(); }
 }
 function saLogout(){ clearSession(); location.reload(); }
+
+/* ── Manage Super Admin accounts ───────────────────────────────
+   একজনই Super Admin থাকলে সে Password ভুলে গেলে/হারিয়ে গেলে পুরো
+   প্ল্যাটফর্মে ঢোকার আর কোনো উপায় থাকে না (Supabase Dashboard-এ গিয়ে
+   ম্যানুয়ালি SQL চালানো ছাড়া)। তাই একাধিক Super Admin রাখার এবং প্রয়োজনে
+   নতুন যোগ/পুরনো বাদ দেওয়ার অপশন — শেষ অ্যাকাউন্টটা ডিলিট করা যাবে না,
+   যাতে ভুলবশত পুরো প্ল্যাটফর্ম লক-আউট না হয়ে যায়।
+   ═══════════════════════════════════════════════════════════ */
+async function renderAdminList(){
+  const body=document.getElementById('sa-admin-body'); if(!body)return;
+  const {data,error}=await supa.from('platform_admins').select('phone,name').order('phone');
+  if(error){ body.innerHTML=emptyRow(3,'লোড করা যায়নি: '+escapeHtml(error.message)); return; }
+  const admins=data||[];
+  body.innerHTML=admins.map(a=>`<tr>
+    <td data-label="Name" style="font-weight:600">${escapeHtml(a.name)}</td>
+    <td data-label="Phone">${escapeHtml(a.phone)}</td>
+    <td data-label=""><button class="btn icon ghost sm" onclick="removeAdmin('${escapeHtml(a.phone)}',${admins.length})" title="Remove">${ICONS.TRASH}</button></td></tr>`).join('')||emptyRow(3,'কোনো admin নেই');
+}
+function openAddAdminModal(){
+  document.getElementById('aa-name').value='';document.getElementById('aa-phone').value='';document.getElementById('aa-pass').value='';
+  document.getElementById('aa-err').style.display='none';
+  setBusy('save-aa',false,'যোগ করুন');openM('ov-addadmin');
+}
+async function saveNewAdmin(){
+  const err=document.getElementById('aa-err'); err.style.display='none';
+  const name=document.getElementById('aa-name').value.trim()||'Super Admin';
+  const phone=document.getElementById('aa-phone').value.trim();
+  const pass=document.getElementById('aa-pass').value;
+  if(!phone){err.textContent='ফোন নম্বর দিন';err.style.display='block';return;}
+  if(!pass||pass.length<4){err.textContent='কমপক্ষে ৪ ক্যারেক্টারের Password দিন';err.style.display='block';return;}
+  setBusy('save-aa',true);
+  const passwordHash=await hashPassword(pass);
+  const ok=await dbOp(supa.from('platform_admins').insert({phone,name,password_hash:passwordHash}),'Admin যোগ করা যায়নি — এই ফোন নম্বর দিয়ে হয়তো আগে থেকেই একজন Super Admin আছে');
+  setBusy('save-aa',false,'যোগ করুন');
+  if(ok){ closeM('ov-addadmin'); toast('নতুন Super Admin যোগ হয়েছে','ok'); await renderAdminList(); }
+}
+async function removeAdmin(phone,totalCount){
+  if(totalCount<=1){ toast('শেষ Super Admin অ্যাকাউন্ট ডিলিট করা যাবে না — প্ল্যাটফর্মে ঢোকার আর কোনো উপায় থাকবে না','er'); return; }
+  if(!confirm('এই Super Admin অ্যাকাউন্ট ডিলিট করবেন?'))return;
+  const ok=await dbOp(supa.from('platform_admins').delete().eq('phone',phone),'ডিলিট করা যায়নি');
+  if(ok){ toast('ডিলিট হয়েছে','ok'); await renderAdminList(); }
+}
 /* ── Change my own password ───────────────────────────────── */
 function openChangePasswordModal(){
   document.getElementById('cp-old').value='';document.getElementById('cp-new').value='';document.getElementById('cp-confirm').value='';
@@ -433,7 +480,7 @@ async function saveChangePassword(){
 async function showSuperAdminDash(){
   document.getElementById('sa-whoami').textContent=platformAdmin.name+' (Super Admin)';
   document.getElementById('sa-dash-screen').style.display='flex';
-  await renderSuperAdminDash();
+  await Promise.all([renderSuperAdminDash(), renderAdminList()]);
 }
 let saMessesCache=[];
 async function renderSuperAdminDash(){
@@ -459,6 +506,8 @@ async function renderSuperAdminDash(){
   document.getElementById('sa-stats').innerHTML=[
     [ICONS.STORE,messes.length,'মোট Mess','c-primary'],
     [ICONS.USERS,members.length,'মোট Member (সব মেস মিলিয়ে)','c-accent'],
+    [ICONS.USERS,rows.reduce((a,r)=>a+r.activeCount,0),'মোট Active Member','c-info'],
+    [ICONS.MEAL,rows.reduce((a,r)=>a+r.monthMeals,0).toFixed(1).replace(/\.0$/,''),'এই মাসের সর্বমোট Meal','c-success'],
     [ICONS.CART,money(rows.reduce((a,r)=>a+r.monthBazar,0)),'এই মাসের সর্বমোট বাজার','c-danger'],
   ].map(([ic,v,l,c])=>`<div class="card stat ${c}"><div class="ic">${ic}</div><div class="lab">${l}</div><div class="val">${v}</div></div>`).join('');
   body.innerHTML=rows.map(r=>`<tr>
@@ -543,6 +592,12 @@ function showApp(fromSuperAdmin){
     const el=document.getElementById(id); if(!el)return;
     el.value=curYr();
   });
+  // Dashboard-এর নিজস্ব Month/Year filter — এখানে "সব" অপশন নেই, কারণ
+  // Meal Rate/Due/Manager হিসাব সবসময় একটা নির্দিষ্ট মাসের জন্যই করা হয়।
+  const dashMonEl=document.getElementById('dash-mon-f');
+  if(dashMonEl){ dashMonEl.innerHTML=MONTHS.map(m=>`<option>${m}</option>`).join(''); dashMonEl.value=curMon(); }
+  const dashYrEl=document.getElementById('dash-yr-f');
+  if(dashYrEl)dashYrEl.value=curYr();
   populateMemberSelects();
   // Settings (Mess name + Manager roster) is Super-Admin (Owner) only
   document.querySelector('.sb-item[data-page="settings"]').style.display=isSuperAdmin?'':'none';
@@ -657,25 +712,36 @@ function otherFundSummary(mid,month,year){
    DASHBOARD
    ═══════════════════════════════════════════════════════════ */
 function renderDash(){
-  const mon=curMon(),yr=curYr(),today=todayISO();
+  const monEl=document.getElementById('dash-mon-f'), yrEl=document.getElementById('dash-yr-f');
+  const mon=monEl&&monEl.value?monEl.value:curMon(), yr=yrEl&&yrEl.value?N(yrEl.value):curYr();
+  const isCurrentMonth=(mon===curMon()&&yr===curYr());
+  const today=todayISO();
   const activeCount=STATE.members.filter(m=>m.status==='Active').length;
-  const todayMeals=STATE.mealEntries.filter(e=>e.date===today).reduce((a,e)=>a+N(e.meals)+N(e.guest),0);
-  const {bazar,rate}=mealRateFor(mon,yr);
+  const {bazar,meals,rate}=mealRateFor(mon,yr);
   const monthDeposits=STATE.deposits.filter(p=>(p.type||'Meal')==='Meal'&&inMonth(p.date,mon,yr)).reduce((a,p)=>a+N(p.amount),0);
   const monthCost=STATE.members.reduce((a,m)=>a+memberSummary(m.id,mon,yr).mealCost,0);
   const balance=monthDeposits-monthCost;
   const mgr=managerFor(mon,yr);
+  // চলতি মাস দেখলে "আজকের Meal" দেখায় (এটাই সবচেয়ে দরকারি তথ্য); অন্য
+  // (পুরনো) মাস ব্রাউজ করলে "আজকের" কথাটা বিভ্রান্তিকর, তাই তখন সেই
+  // ফিল্টার করা মাসের Total Meal দেখায়।
+  const todayMeals=STATE.mealEntries.filter(e=>e.date===today).reduce((a,e)=>a+N(e.meals)+N(e.guest),0);
+  const mealCard=isCurrentMonth
+    ? [ICONS.MEAL,String(todayMeals.toFixed(1)).replace(/\.0$/,''),"আজকের Meal",'c-accent','meals']
+    : [ICONS.MEAL,String(meals.toFixed(1)).replace(/\.0$/,''),mon+' '+yr+'-এর Total Meal','c-accent','meals'];
+  // [icon, value, label, color, target page] — প্রতিটা কার্ড ক্লিক করলে
+  // সংশ্লিষ্ট পেজে চলে যাবে (quick-access)।
   const stats=[
-    [ICONS.USERS,activeCount,'Active Members','c-primary'],
-    [ICONS.MEAL,String(todayMeals.toFixed(1)).replace(/\.0$/,''),"আজকের Meal",'c-accent'],
-    [ICONS.CART,money(bazar),'এই মাসের বাজার','c-danger'],
-    [ICONS.CHART,money(rate.toFixed(2)),'Meal Rate','c-info'],
-    [ICONS.CASH,money(monthDeposits),'এই মাসের Meal Deposit','c-success'],
-    [ICONS.ALERT,money(Math.abs(balance))+(balance<0?' (Due)':' (Surplus)'),'Meal Fund Balance',balance<0?'c-danger':'c-success'],
-    [ICONS.CROWN,mgr?mgr.name:'নির্ধারিত নয়',"এই মাসের Manager",mgr?'c-accent':'c-danger'],
+    [ICONS.USERS,activeCount,'Active Members','c-primary','members'],
+    mealCard,
+    [ICONS.CART,money(bazar),'এই মাসের বাজার','c-danger','bazar'],
+    [ICONS.CHART,money(rate.toFixed(2)),'Meal Rate','c-info','summary'],
+    [ICONS.CASH,money(monthDeposits),'এই মাসের Meal Deposit','c-success','deposits'],
+    [ICONS.ALERT,money(Math.abs(balance))+(balance<0?' (Due)':' (Surplus)'),'Meal Fund Balance',balance<0?'c-danger':'c-success','summary'],
+    [ICONS.CROWN,mgr?mgr.name:'নির্ধারিত নয়',"এই মাসের Manager",mgr?'c-accent':'c-danger','summary'],
   ];
-  document.getElementById('dash-stats').innerHTML=stats.map(([ic,v,l,c])=>
-    `<div class="card stat ${c}"><div class="ic">${ic}</div><div class="lab">${l}</div><div class="val">${v}</div></div>`).join('');
+  document.getElementById('dash-stats').innerHTML=stats.map(([ic,v,l,c,pg])=>
+    `<div class="card stat ${c}" style="cursor:pointer" onclick="goTo('${pg}')" title="${PG[pg]}-এ যান"><div class="ic">${ic}</div><div class="lab">${l}</div><div class="val">${v}</div></div>`).join('');
 
   // 6-month bazar trend chart
   const now=new Date();
@@ -691,13 +757,16 @@ function renderDash(){
     `<div class="bwrap"><div class="bar" style="height:${Math.max(4,(p.total/max)*100)}%" title="${money(p.total)}"></div><div class="lab">${p.label}</div></div>`).join('');
 
   // Dues
+  const duesLab=document.getElementById('dash-dues-mon-lab');
+  if(duesLab)duesLab.textContent=isCurrentMonth?'এই মাস':mon+' '+yr;
   const dues=STATE.members.filter(m=>m.status!=='Left'&&m.inMealFund!==false).map(m=>({m,s:memberSummary(m.id,mon,yr)})).filter(x=>x.s.balance<0).sort((a,b)=>a.s.balance-b.s.balance).slice(0,6);
   document.getElementById('dash-dues').innerHTML=dues.length?dues.map(({m,s})=>
     `<div class="led-row"><span style="display:flex;align-items:center;gap:9px">${avatar(m)}${escapeHtml(m.name)}</span><b style="color:var(--danger)">${money(Math.abs(s.balance))}</b></div>`).join('')
-    :`<div class="empty" style="padding:20px"><p>এই মাসে কারো Due নেই 🎉</p></div>`;
+    :`<div class="empty" style="padding:20px"><p>${isCurrentMonth?'এই মাসে':mon+' '+yr+'-এ'} কারো Due নেই 🎉</p></div>`;
 
-  // চলতি মাসের মধ্যেই সীমাবদ্ধ — নাহলে মাসের ১ তারিখে এখনো নতুন এন্ট্রি না
-  // থাকলে আগের মাসের (যেমন ৩১ অগাস্টের) পুরনো এন্ট্রি দেখিয়ে বিভ্রান্ত করত।
+  // ফিল্টার করা মাসের মধ্যেই সীমাবদ্ধ — নাহলে মাসের ১ তারিখে (চলতি মাস
+  // দেখার সময়) এখনো নতুন এন্ট্রি না থাকলে আগের মাসের পুরনো এন্ট্রি দেখিয়ে
+  // বিভ্রান্ত করত।
   const recentMeals=[...STATE.mealEntries].filter(e=>inMonth(e.date,mon,yr)).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
   document.getElementById('dash-recent-meals').innerHTML=recentMeals.map(e=>`<tr><td data-label="Date">${fmtDate(e.date)}</td><td data-label="Member">${escapeHtml(e.name)}</td><td data-label="Total" class="num">${(N(e.meals)+N(e.guest)).toFixed(1).replace(/\.0$/,'')}</td></tr>`).join('')||emptyRow(3,'এই মাসে কোনো এন্ট্রি নেই');
   const recentBazar=[...STATE.bazarExp].filter(e=>inMonth(e.date,mon,yr)).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
@@ -710,6 +779,8 @@ function emptyRow(cols,text){return `<tr><td colspan="${cols}" class="empty-row"
    ═══════════════════════════════════════════════════════════ */
 function renderMembers(){
   let list=STATE.members.filter(m=>mFilterStatus==='All'||m.status===mFilterStatus);
+  if(mFilterFund==='Meal')list=list.filter(m=>m.inMealFund!==false);
+  else if(mFilterFund==='Other')list=list.filter(m=>m.inOtherFund!==false);
   if(mSearch)list=list.filter(m=>m.name.toLowerCase().includes(mSearch)||(m.phone||'').includes(mSearch)||m.id.toLowerCase().includes(mSearch));
   document.getElementById('mem-body').innerHTML=list.map(m=>`<tr>
     <td data-label="Member"><span style="display:flex;align-items:center;gap:10px;cursor:pointer" onclick="openLedger('${m.id}')">${avatar(m)}<b>${escapeHtml(m.name)}</b></span></td>
@@ -724,6 +795,7 @@ function renderMembers(){
     </div></td></tr>`).join('')||emptyRow(6,'কোনো member নেই — Add Member চাপুন');
 }
 function filterMemStatus(s){mFilterStatus=s;document.querySelectorAll('#mem-pills .pill').forEach(p=>p.classList.toggle('on',p.dataset.s===s));renderMembers();}
+function filterMemFund(f){mFilterFund=f;document.querySelectorAll('#mem-fund-pills .pill').forEach(p=>p.classList.toggle('on',p.dataset.f===f));renderMembers();}
 function memSearch(v){mSearch=v.toLowerCase().trim();renderMembers();}
 function openMemberModal(id){
   editMemberId=id||null;
@@ -827,7 +899,7 @@ function openLedger(id){
    DAILY MEAL ENTRY
    ═══════════════════════════════════════════════════════════ */
 function setMealDate(iso){mealSelDate=iso;document.getElementById('me-date').value=iso;loadMealGrid();}
-function shiftMealDate(delta){const d=new Date(mealSelDate+'T00:00:00');d.setDate(d.getDate()+delta);setMealDate(d.toISOString().slice(0,10));}
+function shiftMealDate(delta){const d=new Date(mealSelDate+'T00:00:00');d.setDate(d.getDate()+delta);setMealDate(toLocalISODate(d));}
 function loadMealGrid(){
   mealSelDate=document.getElementById('me-date').value||todayISO();
   const lab=document.getElementById('meal-date-lab');
@@ -944,22 +1016,33 @@ async function saveDayNote(){
   }
 }
 // Meal Entry পেজের "সাম্প্রতিক এন্ট্রি" লিস্ট — নিজের Month/Year ফিল্টার
-// আছে (ডিফল্ট: চলতি মাস), যাতে মাসের শুরুতে আগের মাসের পুরনো এন্ট্রি
-// দেখিয়ে বিভ্রান্ত না করে।
+// আছে (ডিফল্ট: চলতি মাস)। প্রতিটা তারিখের জন্য একটাই সারি দেখায় (সব
+// মেম্বারের এন্ট্রি একত্র করে) — আগে প্রতি মেম্বারের জন্য আলাদা সারি ছিল,
+// ফলে ৮ জন মেম্বার থাকলে এক তারিখের জন্যই ৮টা সারি হয়ে লিস্ট অনেক লম্বা
+// হয়ে যেত। কোনো সারিতে ক্লিক করলে সেই তারিখ উপরের গ্রিডে খুলে যায়
+// এডিট/ডিলিটের জন্য (হিটম্যাপে ক্লিকের মতোই)।
 function renderMealRecent(){
   const monEl=document.getElementById('me-rec-mon-f'), yrEl=document.getElementById('me-rec-yr-f');
   const mon=monEl?monEl.value:'', yr=yrEl?N(yrEl.value):0;
   let list=[...STATE.mealEntries];
   if(mon)list=list.filter(e=>{const d=new Date(e.date+'T00:00:00');return MONTHS[d.getMonth()]===mon;});
   if(yr)list=list.filter(e=>{const d=new Date(e.date+'T00:00:00');return d.getFullYear()===yr;});
-  list=list.sort((a,b)=>b.date.localeCompare(a.date));
-  if(!mon&&!yr)list=list.slice(0,40); // "সব" বাছা থাকলে খুব বড় লিস্ট এড়াতে সাম্প্রতিক ৪০টা
-  document.getElementById('meal-recent-body').innerHTML=list.map(e=>`<tr>
-    <td data-label="Date">${fmtDate(e.date)}</td><td data-label="Member">${escapeHtml(e.name)}</td>
-    <td data-label="Meals" class="num">${e.meals}</td><td data-label="Guest" class="num">${e.guest||0}</td>
-    <td data-label="Total" class="num" style="font-weight:700">${(N(e.meals)+N(e.guest)).toFixed(1).replace(/\.0$/,'')}</td>
-    <td data-label="Notes" style="color:var(--muted)">${escapeHtml(e.notes)}</td>
-    <td data-label="">${isAdmin?`<button class="btn icon ghost sm" onclick="delMealEntry('${e.id}')">${ICONS.TRASH}</button>`:''}</td></tr>`).join('')||emptyRow(7,'কোনো entry নেই');
+  const byDate={};
+  list.forEach(e=>{ (byDate[e.date]=byDate[e.date]||[]).push(e); });
+  let dates=Object.keys(byDate).sort((a,b)=>b.localeCompare(a));
+  if(!mon&&!yr)dates=dates.slice(0,40); // "সব" বাছা থাকলে খুব বড় লিস্ট এড়াতে সাম্প্রতিক ৪০ দিন
+  document.getElementById('meal-recent-body').innerHTML=dates.map(date=>{
+    const entries=byDate[date];
+    const totalMeal=entries.reduce((a,e)=>a+N(e.meals)+N(e.guest),0);
+    const breakdown=entries.filter(e=>N(e.meals)+N(e.guest)>0)
+      .map(e=>`${escapeHtml(e.name)}: ${(N(e.meals)+N(e.guest)).toFixed(1).replace(/\.0$/,'')}`).join(', ')||'কেউ মিল করেনি';
+    const note=dayNoteFor(date);
+    return `<tr style="cursor:pointer" onclick="setMealDate('${date}')" title="এই তারিখ এডিট করতে ক্লিক করুন">
+      <td data-label="Date" style="font-weight:600">${fmtDate(date)}</td>
+      <td data-label="Total Meal" class="num" style="font-weight:700">${totalMeal.toFixed(1).replace(/\.0$/,'')}</td>
+      <td data-label="কার কয়টা মিল" style="color:var(--muted)">${breakdown}</td>
+      <td data-label="দিনের নোট" style="color:var(--muted)">${escapeHtml(note)||'—'}</td></tr>`;
+  }).join('')||emptyRow(4,'কোনো entry নেই');
 }
 async function delMealEntry(id){
   if(!requireAdmin())return; if(!confirm('এই entry ডিলিট করবেন?'))return;
@@ -1202,6 +1285,21 @@ function renderDeposits(){
     <td data-label="Amount" class="num" style="color:var(--success);font-weight:700">${money(p.amount)}</td>
     <td data-label="Method">${p.method}</td><td data-label="Notes" style="color:var(--muted)">${escapeHtml(p.notes)}</td>
     <td data-label="">${isAdmin?`<button class="btn icon ghost sm" onclick="delDeposit('${p.id}')">${ICONS.TRASH}</button>`:''}</td></tr>`).join('')||emptyRow(6,'কোনো deposit নেই');
+
+  // কোন member এই ফিল্টার করা সময়ে (মাস/সব) মোট কত Deposit করলো — ছোট থেকে
+  // বড় লিস্ট, ক্লিক করলে তার Ledger-এ চলে যায় বিস্তারিত দেখার জন্য।
+  const byMember={};
+  list.forEach(p=>{ (byMember[p.mid]=byMember[p.mid]||{name:p.name,total:0,count:0}).total+=N(p.amount); byMember[p.mid].count++; });
+  const memberRows=Object.entries(byMember).map(([mid,v])=>({mid,...v})).sort((a,b)=>b.total-a.total);
+  const memberTitle=document.getElementById('dep-member-title');
+  if(memberTitle)memberTitle.textContent='Member-ভিত্তিক Deposit সারাংশ ('+(mon?mon+(yr?' '+yr:''):'সব সময়')+')';
+  const memberBody=document.getElementById('dep-member-body');
+  if(memberBody){
+    memberBody.innerHTML=memberRows.map(r=>`<tr style="cursor:pointer" onclick="openLedger('${r.mid}')">
+      <td data-label="Member" style="font-weight:600">${escapeHtml(r.name)}</td>
+      <td data-label="Total Deposit" class="num" style="color:var(--success);font-weight:700">${money(r.total)}</td>
+      <td data-label="Entries" class="num">${r.count}</td></tr>`).join('')||emptyRow(3,'কোনো deposit নেই');
+  }
 }
 function populateDepMemberSelect(list){
   const el=document.getElementById('dep-member'); if(!el)return;

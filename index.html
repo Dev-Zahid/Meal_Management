@@ -99,13 +99,23 @@
   </header>
   <div style="padding:20px;max-width:1100px;margin:0 auto;width:100%">
     <div class="grid cols-3" id="sa-stats" style="margin-bottom:18px"></div>
-    <div class="card" style="padding:16px">
+    <div class="card" style="padding:16px;margin-bottom:18px">
       <div class="card-h" style="margin-bottom:12px"><h3>সব মেস</h3>
         <input type="text" placeholder="মেস খুঁজুন..." oninput="saMessSearch(this.value)" style="max-width:220px;margin-left:auto">
       </div>
       <div class="tblwrap"><table class="rtbl">
         <thead><tr><th>Mess</th><th class="num">Members</th><th class="num">Active</th><th class="num">এই মাসের Meal</th><th class="num">এই মাসের বাজার</th><th>তৈরি</th><th></th></tr></thead>
         <tbody id="sa-mess-body"></tbody>
+      </table></div>
+    </div>
+    <div class="card" style="padding:16px">
+      <div class="card-h" style="margin-bottom:12px"><h3>Super Admin অ্যাকাউন্ট</h3>
+        <button class="btn sm primary" style="margin-left:auto" onclick="openAddAdminModal()">+ Super Admin যোগ করুন</button>
+      </div>
+      <p class="hint" style="margin-bottom:12px">একের বেশি Super Admin অ্যাকাউন্ট রাখা ভালো — একজনের Password ভুলে গেলে/হারিয়ে গেলে অন্যজন দিয়ে ঢুকে ঠিক করা যাবে। কমপক্ষে একটা অ্যাকাউন্ট সবসময় থাকতেই হবে, তাই শেষটা ডিলিট করা যাবে না।</p>
+      <div class="tblwrap"><table class="rtbl">
+        <thead><tr><th>Name</th><th>Phone</th><th></th></tr></thead>
+        <tbody id="sa-admin-body"></tbody>
       </table></div>
     </div>
   </div>
@@ -158,6 +168,11 @@
       <!-- ══ DASHBOARD ══ -->
       <section class="page on" data-page="dashboard">
         <div id="cf-banner"></div>
+        <div class="fbar">
+          <label>Month:</label>
+          <select id="dash-mon-f" onchange="renderDash()"></select>
+          <input type="number" id="dash-yr-f" placeholder="Year" style="width:90px" onchange="renderDash()">
+        </div>
         <div class="grid cols-4" id="dash-stats" style="margin-bottom:16px"></div>
         <div class="two-col">
           <div class="card">
@@ -165,7 +180,7 @@
             <div class="chart-bars" id="dash-chart"></div>
           </div>
           <div class="card">
-            <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2.3 20.5h19.4z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17.4" r=".7" fill="currentColor" stroke="none"/></svg>Due তালিকা (এই মাস)</h3></div>
+            <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2.3 20.5h19.4z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17.4" r=".7" fill="currentColor" stroke="none"/></svg>Due তালিকা (<span id="dash-dues-mon-lab">এই মাস</span>)</h3></div>
             <div id="dash-dues"></div>
           </div>
         </div>
@@ -190,6 +205,11 @@
             <button class="pill" data-s="Active" onclick="filterMemStatus('Active')">Active</button>
             <button class="pill" data-s="Inactive" onclick="filterMemStatus('Inactive')">Inactive</button>
             <button class="pill" data-s="Left" onclick="filterMemStatus('Left')">Left</button>
+          </div>
+          <div class="pillbar" id="mem-fund-pills">
+            <button class="pill on" data-f="All" onclick="filterMemFund('All')">সব Fund</button>
+            <button class="pill" data-f="Meal" onclick="filterMemFund('Meal')">Meal Fund</button>
+            <button class="pill" data-f="Other" onclick="filterMemFund('Other')">Other Fund</button>
           </div>
         </div>
         <div class="card pad-0"><div class="tblwrap"><table class="rtbl">
@@ -237,7 +257,7 @@
           <input type="number" id="me-rec-yr-f" placeholder="Year" style="width:90px" onchange="renderMealRecent()">
         </div>
         <div class="card pad-0"><div class="tblwrap"><table class="rtbl">
-          <thead><tr><th>Date</th><th>Member</th><th>Meals</th><th>Guest</th><th>Total</th><th>Notes</th><th></th></tr></thead>
+          <thead><tr><th>Date</th><th>Total Meal</th><th>কার কয়টা মিল</th><th>দিনের নোট</th></tr></thead>
           <tbody id="meal-recent-body"></tbody>
         </table></div></div>
       </section>
@@ -294,9 +314,15 @@
           <input type="number" id="dep-yr-f" placeholder="Year" style="width:90px" onchange="renderDeposits()">
         </div>
         <div class="grid cols-2" id="dep-cards" style="margin-bottom:14px"></div>
-        <div class="card pad-0"><div class="tblwrap"><table class="rtbl">
+        <div class="card pad-0" style="margin-bottom:22px"><div class="tblwrap"><table class="rtbl">
           <thead><tr><th>Date</th><th>Member</th><th>Amount</th><th>Method</th><th>Notes</th><th></th></tr></thead>
           <tbody id="dep-body"></tbody>
+        </table></div></div>
+
+        <div class="card-h" style="margin-bottom:10px"><h3 id="dep-member-title">Member-ভিত্তিক Deposit সারাংশ</h3></div>
+        <div class="card pad-0"><div class="tblwrap"><table class="rtbl">
+          <thead><tr><th>Member</th><th>Total Deposit</th><th>Entries</th></tr></thead>
+          <tbody id="dep-member-body"></tbody>
         </table></div></div>
       </section>
 
@@ -445,6 +471,19 @@
       <div id="cp-err" class="err-box"></div>
     </div>
     <div class="m-foot"><button class="btn" onclick="closeM('ov-changepass')">বাতিল</button><button class="btn primary" id="cp-btn" onclick="saveChangePassword()">Password পরিবর্তন করুন</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="ov-addadmin">
+  <div class="modal">
+    <div class="m-head"><h3>নতুন Super Admin যোগ করুন</h3><button class="btn icon ghost" onclick="closeM('ov-addadmin')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
+    <div class="m-body">
+      <div class="fg"><label>নাম</label><input type="text" id="aa-name" placeholder="নাম"></div>
+      <div class="fg"><label>ফোন নম্বর *</label><input type="tel" id="aa-phone" placeholder="ফোন নম্বর"></div>
+      <div class="fg"><label>Password *</label><input type="password" id="aa-pass" placeholder="কমপক্ষে ৪ ক্যারেক্টার"></div>
+      <div id="aa-err" class="err-box"></div>
+    </div>
+    <div class="m-foot"><button class="btn" onclick="closeM('ov-addadmin')">বাতিল</button><button class="btn primary" id="save-aa" onclick="saveNewAdmin()">যোগ করুন</button></div>
   </div>
 </div>
 
