@@ -173,6 +173,28 @@
           <select id="dash-mon-f" onchange="renderDash()"></select>
           <input type="number" id="dash-yr-f" placeholder="Year" style="width:90px" onchange="renderDash()">
         </div>
+
+        <div class="card" id="meal-request-card" style="margin-bottom:16px;display:none">
+          <div class="card-h" style="margin-bottom:8px"><h3>আগামীকালের মিল জানিয়ে দিন</h3></div>
+          <p class="hint" id="mr-date-lab" style="margin-bottom:12px"></p>
+          <div class="fr2">
+            <div class="fg" style="margin-bottom:0">
+              <label>আপনার মিল সংখ্যা</label>
+              <input type="number" step="0.5" min="0" id="mr-meals" placeholder="যেমন ১">
+            </div>
+            <div class="fg" style="margin-bottom:0;justify-content:flex-end">
+              <label>&nbsp;</label>
+              <div style="display:flex;gap:6px">
+                <button class="btn sm" onclick="document.getElementById('mr-meals').value='0'">০ (বন্ধ)</button>
+                <button class="btn sm" onclick="document.getElementById('mr-meals').value='1'">১</button>
+                <button class="btn sm" onclick="document.getElementById('mr-meals').value='2'">২</button>
+              </div>
+            </div>
+          </div>
+          <button class="btn primary block" id="mr-save-btn" onclick="saveMealRequest()" style="margin-top:12px">জানিয়ে দিন</button>
+          <div class="ibox" id="mr-status" style="margin-top:12px"></div>
+        </div>
+
         <div class="grid cols-4" id="dash-stats" style="margin-bottom:16px"></div>
         <div class="two-col">
           <div class="card">

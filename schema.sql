@@ -106,6 +106,18 @@ create table if not exists day_notes (
   primary key (mess_id, date)
 );
 
+-- মেম্বার নিজে আগের রাতে জানিয়ে রাখে পরের দিন তার কয়টা মিল লাগবে (রান্নার
+-- পরিমাণ ঠিক করার জন্য) — Manager পরে আসল সংখ্যার সাথে মিলিয়ে দেখে, না
+-- মিললে meal_entries.notes-এ কারণ লিখে চূড়ান্ত সংখ্যা বসায়।
+create table if not exists meal_requests (
+  mess_id text not null,
+  date date not null,
+  member_id text not null,
+  member_name text not null,
+  meals numeric default 0,
+  primary key (mess_id, date, member_id)
+);
+
 -- NOTE: member_id columns above are plain text, NOT foreign keys.
 -- This matches the app's existing behavior — deleting a member keeps
 -- their old meal/deposit history intact (same as before).
@@ -129,6 +141,7 @@ alter table other_expenses enable row level security;
 alter table deposits enable row level security;
 alter table managers enable row level security;
 alter table day_notes enable row level security;
+alter table meal_requests enable row level security;
 
 create policy "public read/write" on messes for all using (true) with check (true);
 create policy "public read/write" on platform_admins for all using (true) with check (true);
@@ -139,3 +152,4 @@ create policy "public read/write" on other_expenses for all using (true) with ch
 create policy "public read/write" on deposits for all using (true) with check (true);
 create policy "public read/write" on managers for all using (true) with check (true);
 create policy "public read/write" on day_notes for all using (true) with check (true);
+create policy "public read/write" on meal_requests for all using (true) with check (true);

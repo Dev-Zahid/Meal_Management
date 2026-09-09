@@ -89,6 +89,21 @@ alter table day_notes enable row level security;
 drop policy if exists "public read/write" on day_notes;
 create policy "public read/write" on day_notes for all using (true) with check (true);
 
+-- ৫.২) নতুন টেবিল: meal_requests — মেম্বার আগের রাতে জানিয়ে রাখে পরের
+-- দিন তার কয়টা মিল লাগবে; Manager পরে আসল সংখ্যার সাথে মিলিয়ে চূড়ান্ত
+-- করে (না মিললে meal_entries.notes-এ কারণ লেখা বাধ্যতামূলক)
+create table if not exists meal_requests (
+  mess_id text not null,
+  date date not null,
+  member_id text not null,
+  member_name text not null,
+  meals numeric default 0,
+  primary key (mess_id, date, member_id)
+);
+alter table meal_requests enable row level security;
+drop policy if exists "public read/write" on meal_requests;
+create policy "public read/write" on meal_requests for all using (true) with check (true);
+
 -- ৬) (ঐচ্ছিক) পুরনো singleton settings টেবিল আর ব্যবহার হবে না, কিন্তু
 --    নিরাপত্তার জন্য এখনই ডিলিট করা হচ্ছে না — চাইলে ম্যানুয়ালি ডিলিট করতে
 --    পারবেন: drop table if exists settings;

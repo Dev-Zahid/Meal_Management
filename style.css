@@ -216,7 +216,7 @@ tbody tr:hover{background:var(--surface-2)}
 .toast.er{background:var(--danger);color:#fff}
 
 /* ── Meal grid & calendar heatmap ───────────────────────────── */
-.meal-row{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);
+.meal-row{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);
   border-radius:var(--radius-sm);margin-bottom:8px;background:var(--surface-2)}
 .meal-row .nm{flex:1;min-width:0;font-weight:600;font-size:13.5px;display:flex;align-items:center;gap:10px}
 .meal-row .fld{display:flex;flex-direction:column;gap:3px;align-items:center}

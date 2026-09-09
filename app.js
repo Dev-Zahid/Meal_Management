@@ -150,7 +150,7 @@ function genId(prefix){
 }
 
 async function loadState(messId){
-  const [s,mem,meals,bazar,other,dep,mgrs,dn]=await Promise.all([
+  const [s,mem,meals,bazar,other,dep,mgrs,dn,mr]=await Promise.all([
     supa.from('messes').select('*').eq('id',messId).maybeSingle(),
     supa.from('members').select('*').eq('mess_id',messId),
     supa.from('meal_entries').select('*').eq('mess_id',messId),
@@ -159,8 +159,9 @@ async function loadState(messId){
     supa.from('deposits').select('*').eq('mess_id',messId),
     supa.from('managers').select('*').eq('mess_id',messId),
     supa.from('day_notes').select('*').eq('mess_id',messId),
+    supa.from('meal_requests').select('*').eq('mess_id',messId),
   ]);
-  const firstErr=[s,mem,meals,bazar,other,dep,mgrs,dn].find(r=>r.error);
+  const firstErr=[s,mem,meals,bazar,other,dep,mgrs,dn,mr].find(r=>r.error);
   if(firstErr){ toast('Database connect করা যায়নি: '+firstErr.error.message,'er'); return null; }
   return {
     messId,
@@ -175,9 +176,16 @@ async function loadState(messId){
     managers:(mgrs.data||[]).map(r=>({monthYear:r.month_year,mid:r.member_id,name:r.member_name})),
     // প্রতিদিনের ঐচ্ছিক নোট — যেমন "বাজার হয়নি তাই মিল বন্ধ", "রান্নার লোক অনুপস্থিত" ইত্যাদি
     dayNotes:(dn.data||[]).map(r=>({date:r.date,note:r.note||''})),
+    // মেম্বারের আগের রাতে দেওয়া "আগামীকাল কয়টা মিল লাগবে" — Manager
+    // আসল সংখ্যার সাথে মিলিয়ে চূড়ান্ত করে।
+    mealRequests:(mr.data||[]).map(r=>({date:r.date,mid:r.member_id,name:r.member_name,meals:Number(r.meals)})),
   };
 }
 function dayNoteFor(dateISO){ const r=(STATE.dayNotes||[]).find(x=>x.date===dateISO); return r?r.note:''; }
+// একটা নির্দিষ্ট মেম্বার একটা নির্দিষ্ট তারিখের জন্য মিল "চেয়েছিল" কিনা —
+// থাকলে সংখ্যা, না থাকলে null (অর্থাৎ "জানায়নি", ০ থেকে আলাদা)।
+function requestFor(mid,dateISO){ const r=(STATE.mealRequests||[]).find(x=>x.mid===mid&&x.date===dateISO); return r?N(r.meals):null; }
+function tomorrowISO(){ const d=new Date(); d.setDate(d.getDate()+1); return toLocalISODate(d); }
 // Runs a Supabase write and shows a toast on failure. Returns true/false.
 async function dbOp(promise,failMsg){
   const {error}=await promise;
@@ -335,7 +343,7 @@ async function doSetup(){
   setBusy('su-btn',false,'খাতা তৈরি করুন');
   if(ownerLinkOk){
     currentMessId=messId;
-    STATE={messId,settings:{messName,theme:'light',ownerMemberId:ownerId},members:[{id:ownerId,name:ownerName,phone:ownerPhone,passwordHash,status:'Active',joined:todayISO(),left:'',inactiveFrom:'',inactiveTo:'',inMealFund:true,inOtherFund:true,notes:''}],mealEntries:[],bazarExp:[],otherExp:[],deposits:[],managers:[],dayNotes:[]};
+    STATE={messId,settings:{messName,theme:'light',ownerMemberId:ownerId},members:[{id:ownerId,name:ownerName,phone:ownerPhone,passwordHash,status:'Active',joined:todayISO(),left:'',inactiveFrom:'',inactiveTo:'',inMealFund:true,inOtherFund:true,notes:''}],mealEntries:[],bazarExp:[],otherExp:[],deposits:[],managers:[],dayNotes:[],mealRequests:[]};
     document.getElementById('setup-screen').style.display='none';
     currentMember=STATE.members[0]; isSuperAdmin=true; isMonthManager=false; isAdmin=true;
     applyTheme();
@@ -582,7 +590,7 @@ async function backToSuperAdminDash(){
 }
 async function deleteMess(messId,name){
   if(!confirm(`"${name}" মেসটা পুরোপুরি ডিলিট করবেন? এর সব member/meal/bazar/deposit ইতিহাস চিরতরে মুছে যাবে — এটা আর ফেরত আনা যাবে না।`))return;
-  const tables=['meal_entries','bazar_expenses','other_expenses','deposits','managers','day_notes','members'];
+  const tables=['meal_entries','bazar_expenses','other_expenses','deposits','managers','day_notes','meal_requests','members'];
   for(const t of tables){
     const {error}=await supa.from(t).delete().eq('mess_id',messId);
     if(error){ toast(`${t} ডিলিট করা যায়নি: `+error.message,'er'); return; }
@@ -742,7 +750,52 @@ function otherFundSummary(mid,month,year){
 /* ═══════════════════════════════════════════════════════════
    DASHBOARD
    ═══════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════
+   আগামীকালের মিল অনুরোধ (মেম্বার নিজে জানায়) — এটা টার্গেট তারিখ সবসময়
+   "আজ+১" (tomorrowISO), তাই মধ্যরাত পেরোলেই এই উইজেট এমনিতেই পরের দিনের
+   দিকে সরে যায় — গতকাল "আগামীকাল" ছিল এমন তারিখ আর এই উইজেট দিয়ে
+   বদলানো যায় না, ওটা তখন Manager-এর মিলিয়ে-চূড়ান্ত-করার আওতায় চলে যায়।
+   এভাবে রাত ১২টার কাট-অফ আলাদা কোনো সময়-হিসাব ছাড়াই স্বাভাবিকভাবেই হয়ে
+   যায়। অ্যাপ খোলার সাথে সাথে সবার আগে এটাই চোখে পড়ে — তাই এটা "আজকের
+   মিল এন্ট্রি দিন" reminder-এর কাজও করে, আলাদা push notification ছাড়াই।
+   ═══════════════════════════════════════════════════════════ */
+function renderMealRequestCard(){
+  const card=document.getElementById('meal-request-card'); if(!card)return;
+  if(!currentMember||!isEligibleForMeal(currentMember,tomorrowISO())){ card.style.display='none'; return; }
+  card.style.display='';
+  const tmw=tomorrowISO();
+  document.getElementById('mr-date-lab').textContent='আগামীকাল, '+fmtDate(tmw)+' — রাত ১২টার মধ্যে জানিয়ে দিন, সেই হিসাবে বাজার/রান্না ঠিক হবে।';
+  const existing=requestFor(currentMember.id,tmw);
+  document.getElementById('mr-meals').value=existing!==null?existing:'';
+  const statusEl=document.getElementById('mr-status');
+  if(existing!==null){
+    statusEl.className='ibox info';
+    statusEl.innerHTML=ICONS.CHECK+`<span>আপনি জানিয়েছেন: <b>${existing}</b> মিল। বদলাতে চাইলে নতুন সংখ্যা লিখে আবার Save করুন।</span>`;
+  } else {
+    statusEl.className='ibox warn';
+    statusEl.innerHTML=ICONS.ALERT+'<span>এখনো জানাননি — রাত ১২টার আগে জানিয়ে দিন, নাহলে রান্নার হিসাবে আপনার মিল ধরা হবে না।</span>';
+  }
+}
+async function saveMealRequest(){
+  if(!currentMember)return;
+  const tmw=tomorrowISO();
+  const raw=document.getElementById('mr-meals').value.trim();
+  if(raw===''||isNaN(Number(raw))||N(raw)<0){ toast('মিল সংখ্যা ঠিকভাবে দিন (০ বা তার বেশি)','er'); return; }
+  const meals=N(raw);
+  setBusy('mr-save-btn',true);
+  const ok=await dbOp(supa.from('meal_requests').upsert({mess_id:currentMessId,date:tmw,member_id:currentMember.id,member_name:currentMember.name,meals},{onConflict:'mess_id,date,member_id'}),'জানানো যায়নি');
+  setBusy('mr-save-btn',false,'জানিয়ে দিন');
+  if(ok){
+    const idx=STATE.mealRequests.findIndex(x=>x.mid===currentMember.id&&x.date===tmw);
+    const rec={date:tmw,mid:currentMember.id,name:currentMember.name,meals};
+    if(idx>=0)STATE.mealRequests[idx]=rec; else STATE.mealRequests.push(rec);
+    toast('জানানো হয়েছে ✅','ok');
+    renderMealRequestCard();
+  }
+}
+
 function renderDash(){
+  renderMealRequestCard();
   const monEl=document.getElementById('dash-mon-f'), yrEl=document.getElementById('dash-yr-f');
   const mon=monEl&&monEl.value?monEl.value:curMon(), yr=yrEl&&yrEl.value?N(yrEl.value):curYr();
   const isCurrentMonth=(mon===curMon()&&yr===curYr());
@@ -964,7 +1017,9 @@ function loadMealGrid(){
   if(!isAdmin){
     grid.innerHTML=noticeHtml+eligible.map(m=>{
       const ex=STATE.mealEntries.find(e=>e.mid===m.id&&e.date===mealSelDate);
-      return `<div class="meal-row"><div class="nm">${avatar(m)}${escapeHtml(m.name)}</div>
+      const req=requestFor(m.id,mealSelDate);
+      const reqBadge=req!==null?`<span class="badge bl">চেয়েছে: ${req}</span>`:'';
+      return `<div class="meal-row"><div class="nm">${avatar(m)}${escapeHtml(m.name)}${reqBadge}</div>
         <div style="font-weight:700" class="num">${ex?N(ex.meals):'—'} meal${ex&&N(ex.guest)>0?` + ${N(ex.guest)} guest`:''}</div></div>`;
     }).join('')||`<div class="empty">${ICONS.EMPTY}<p>কোনো Active member নেই</p></div>`;
     renderMealRecent(); return;
@@ -972,17 +1027,37 @@ function loadMealGrid(){
   grid.innerHTML=noticeHtml+eligible.map(m=>{
     const ex=STATE.mealEntries.find(e=>e.mid===m.id&&e.date===mealSelDate);
     const hasGuest=!!(ex&&N(ex.guest)>0);
+    // মেম্বার আগের রাতে যা "চেয়েছিল" (মেল রিকোয়েস্ট) — থাকলে দেখায়, আসল
+    // সংখ্যা তার থেকে ভিন্ন হলে নিচে একটা বাধ্যতামূলক নোট ফিল্ড খুলে যায়।
+    const req=requestFor(m.id,mealSelDate);
+    const reqBadge=req!==null?`<span class="badge bl">চেয়েছে: ${req}</span>`:`<span class="badge gy">জানায়নি</span>`;
+    const initialMismatch=req!==null&&ex&&N(ex.meals)!==req;
     return `<div class="meal-row">
-      <div class="nm">${avatar(m)}${escapeHtml(m.name)}</div>
-      <div class="fld"><label>Meals</label><input type="number" step="0.5" min="0" id="mg-${m.id}" value="${ex?ex.meals:''}" placeholder="2"></div>
+      <div class="nm">${avatar(m)}${escapeHtml(m.name)}${reqBadge}</div>
+      <div class="fld"><label>Meals</label><input type="number" step="0.5" min="0" id="mg-${m.id}" value="${ex?ex.meals:''}" placeholder="2" oninput="checkMealMismatch('${m.id}')"></div>
       <label class="guest-toggle ${hasGuest?'active':''}" id="gt-${m.id}">
         <input type="checkbox" id="mggc-${m.id}" ${hasGuest?'checked':''} onchange="toggleGuestInput('${m.id}')" style="width:14px;height:14px">
         Guest
       </label>
       <div class="fld" id="gf-${m.id}" style="${hasGuest?'':'display:none'}"><label>Qty</label><input type="number" step="0.5" min="0" id="mgg-${m.id}" value="${hasGuest?ex.guest:''}" placeholder="1"></div>
+      <div class="fg" id="mn-wrap-${m.id}" style="flex-basis:100%;margin:2px 0 0;${initialMismatch?'':'display:none'}">
+        <label style="color:var(--danger)">অনুরোধের (${req}) সাথে মিলছে না — কেন ভিন্ন হলো লিখুন *</label>
+        <input type="text" id="mn-${m.id}" value="${escapeHtml(ex?ex.notes:'')}" placeholder="যেমনঃ ও বাসায় ছিল না তাই মিল বাদ, বা অতিরিক্ত মিল খেয়েছে">
+      </div>
     </div>`;
   }).join('')||`<div class="empty">${ICONS.EMPTY}<p>কোনো Active member নেই — আগে Members পেজ থেকে যোগ করুন</p></div>`;
   renderMealRecent();
+}
+// আসল মিল সংখ্যা মেম্বারের অনুরোধের সাথে না মিললে সেই সারির নোট ফিল্ড
+// দেখায় (বাধ্যতামূলক হবে saveMealGrid()-এ), মিললে/অনুরোধ না-থাকলে লুকিয়ে
+// রাখে।
+function checkMealMismatch(mid){
+  const wrap=document.getElementById('mn-wrap-'+mid); if(!wrap)return;
+  const req=requestFor(mid,mealSelDate);
+  const valEl=document.getElementById('mg-'+mid);
+  const val=valEl&&valEl.value!==''?N(valEl.value):null;
+  const mismatch=(req!==null&&val!==null&&val!==req);
+  wrap.style.display=mismatch?'':'none';
 }
 function toggleGuestInput(mid){
   const cb=document.getElementById('mggc-'+mid),wrap=document.getElementById('gf-'+mid),tgl=document.getElementById('gt-'+mid);
@@ -993,6 +1068,7 @@ function toggleGuestInput(mid){
 function quickFillMeals(val){
   STATE.members.filter(m=>isEligibleForMeal(m,mealSelDate)).forEach(m=>{
     const el=document.getElementById('mg-'+m.id); if(el)el.value=val;
+    checkMealMismatch(m.id);
   });
   toast(val>0?'সবাইকে '+val+' Meal দেওয়া হয়েছে':'সবাইকে Off দেওয়া হয়েছে','ok');
 }
@@ -1003,13 +1079,28 @@ async function saveMealGrid(){
   // Meal Fund).
   const members=STATE.members.filter(m=>isEligibleForMeal(m,mealSelDate));
   if(!members.length){toast('কোনো eligible Active member নেই','er');return;}
+  // মেম্বারের আগের রাতের অনুরোধের সাথে আসল সংখ্যা না মিললে, কেন মিলল না
+  // তার একটা নোট লেখা বাধ্যতামূলক — সেভ করার আগে সব মেম্বারের জন্য চেক
+  // করে নেয়, একজনেরও বাকি থাকলে পুরো Save আটকে দেয়।
+  for(const m of members){
+    const meals=N(document.getElementById('mg-'+m.id).value);
+    const req=requestFor(m.id,mealSelDate);
+    const noteEl=document.getElementById('mn-'+m.id);
+    if(req!==null&&meals!==req&&(!noteEl||!noteEl.value.trim())){
+      toast(m.name+'-এর মিল অনুরোধের ('+req+') সাথে মিলছে না — কেন ভিন্ন হলো নোটে লিখুন','er');
+      if(noteEl)noteEl.focus();
+      return;
+    }
+  }
   setBusy('save-meal-grid',true);
   const rows=members.map(m=>{
     const meals=N(document.getElementById('mg-'+m.id).value);
     const guest=N(document.getElementById('mgg-'+m.id).value);
     const idx=STATE.mealEntries.findIndex(e=>e.mid===m.id&&e.date===mealSelDate);
     const id=idx>=0?STATE.mealEntries[idx].id:genId('ME-');
-    return {id, date:mealSelDate, mid:m.id, name:m.name, meals, guest, notes:''};
+    const noteEl=document.getElementById('mn-'+m.id);
+    const notes=noteEl?noteEl.value.trim():(idx>=0?STATE.mealEntries[idx].notes:'');
+    return {id, date:mealSelDate, mid:m.id, name:m.name, meals, guest, notes};
   });
   const dbRows=rows.map(r=>({id:r.id,mess_id:currentMessId,date:r.date,member_id:r.mid,member_name:r.name,meals:r.meals,guest:r.guest,notes:r.notes}));
   const ok=await dbOp(supa.from('meal_entries').upsert(dbRows,{onConflict:'member_id,date'}),'মিল এন্ট্রি সেভ করা যায়নি');
