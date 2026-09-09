@@ -35,7 +35,8 @@ const ICONS={
   EDIT: svg('<path d="M4 20h4.2L19 9.2a2.1 2.1 0 0 0 0-3L18 5a2.1 2.1 0 0 0-3 0L4.2 15.8z"/><path d="M14 7l3 3"/>'),
   EYE: svg('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>'),
   EYEOFF: svg('<path d="M3 3l18 18"/><path d="M10.6 5.2A10.6 10.6 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.5 6.6C3.7 8.5 2 12 2 12s3.6 7 10 7a10.5 10.5 0 0 0 3.1-.5"/><path d="M9.9 10a3 3 0 0 0 4.2 4.2"/>'),
-  EMPTY: svg('<path d="M4 9h16l-1.4 10.2a2 2 0 0 1-2 1.8H7.4a2 2 0 0 1-2-1.8z"/><path d="M9 9V6.5a3 3 0 0 1 6 0V9"/>')
+  EMPTY: svg('<path d="M4 9h16l-1.4 10.2a2 2 0 0 1-2 1.8H7.4a2 2 0 0 1-2-1.8z"/><path d="M9 9V6.5a3 3 0 0 1 6 0V9"/>'),
+  WHATSAPP: svg('<path d="M21 11.5a8.5 8.5 0 0 1-12.4 7.6L3 20l1-5.3A8.5 8.5 0 1 1 21 11.5z"/><path d="M8.3 9.3c.5 2.7 2.6 4.9 5.3 5.4"/>')
 };
 /* (ICONS object above is still used for dynamically-rendered rows, e.g. ${ICONS.TRASH} in template literals) */
 
@@ -78,6 +79,36 @@ const AV_COLORS=['#1F6F54','#DD9E33','#2E7B79','#C6553D','#6E5DA6','#3C7DBF','#B
 function avatarColor(id){let h=0;for(let i=0;i<id.length;i++)h=(h*31+id.charCodeAt(i))>>>0;return AV_COLORS[h%AV_COLORS.length];}
 function avatar(m){return `<div class="avatar" style="background:${avatarColor(m.id)}">${initials(m.name)}</div>`;}
 function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+/* ── WhatsApp quick-message (wa.me link) ─────────────────────────
+   কোনো ব্যাকএন্ড বা টাকা ছাড়াই — সংশ্লিষ্ট member-এর WhatsApp খুলে
+   দেয়, মেসেজ আগে থেকে লেখা থাকে, Admin শুধু "Send" চাপে। বাংলাদেশি
+   লোকাল নম্বর (০১...) কে আন্তর্জাতিক ফরম্যাটে (৮৮০...) রূপান্তর করে।
+   ═══════════════════════════════════════════════════════════ */
+function waPhoneFormat(phone){
+  const d=(phone||'').replace(/\D/g,'');
+  if(!d)return '';
+  if(d.startsWith('880'))return d;
+  if(d.startsWith('0'))return '880'+d.slice(1);
+  return d;
+}
+function openWhatsApp(phone,text){
+  const p=waPhoneFormat(phone);
+  if(!p){ toast('এই মেম্বারের ফোন নম্বর সেভ নেই — আগে Member Edit থেকে ফোন নম্বর যোগ করুন','er'); return; }
+  window.open('https://wa.me/'+p+'?text='+encodeURIComponent(text),'_blank');
+}
+function waDepositMsg(depositId){
+  const p=STATE.deposits.find(x=>x.id===depositId); if(!p)return;
+  const m=STATE.members.find(x=>x.id===p.mid);
+  const text=`আসসালামু আলাইকুম ${p.name},\nআপনার ${money(p.amount)} টাকা মিল ফান্ডে জমা হয়েছে ✅\nতারিখ: ${fmtDate(p.date)}\nধন্যবাদ।\n- ${STATE.settings.messName||'মেস'}`;
+  openWhatsApp(m?m.phone:'',text);
+}
+function waDueReminder(mid,mon,yr){
+  const m=STATE.members.find(x=>x.id===mid); if(!m)return;
+  const s=memberSummary(mid,mon,yr);
+  const text=`আসসালামু আলাইকুম ${m.name},\nআপনার ${mon} ${yr} মাসের মিল ফান্ডে বর্তমানে ${money(Math.abs(s.balance))} টাকা Due আছে।\nসম্ভব হলে দ্রুত জমা দিয়ে দিবেন। ধন্যবাদ।\n- ${STATE.settings.messName||'মেস'}`;
+  openWhatsApp(m.phone,text);
+}
 function inMonth(dateStr,month,year){const d=new Date(dateStr+'T00:00:00');return MONTHS[d.getMonth()]===month&&d.getFullYear()===year;}
 // True if a member has been marked inactive (by the Manager/Owner) for a
 // date range that covers dateISO — meal off automatically, hidden from
@@ -761,7 +792,11 @@ function renderDash(){
   if(duesLab)duesLab.textContent=isCurrentMonth?'এই মাস':mon+' '+yr;
   const dues=STATE.members.filter(m=>m.status!=='Left'&&m.inMealFund!==false).map(m=>({m,s:memberSummary(m.id,mon,yr)})).filter(x=>x.s.balance<0).sort((a,b)=>a.s.balance-b.s.balance).slice(0,6);
   document.getElementById('dash-dues').innerHTML=dues.length?dues.map(({m,s})=>
-    `<div class="led-row"><span style="display:flex;align-items:center;gap:9px">${avatar(m)}${escapeHtml(m.name)}</span><b style="color:var(--danger)">${money(Math.abs(s.balance))}</b></div>`).join('')
+    `<div class="led-row"><span style="display:flex;align-items:center;gap:9px">${avatar(m)}${escapeHtml(m.name)}</span>
+     <span style="display:flex;align-items:center;gap:8px">
+       <b style="color:var(--danger)">${money(Math.abs(s.balance))}</b>
+       ${isAdmin?`<button class="btn icon ghost sm" onclick="waDueReminder('${m.id}','${mon}',${yr})" title="WhatsApp-এ Due মনে করিয়ে দিন">${ICONS.WHATSAPP}</button>`:''}
+     </span></div>`).join('')
     :`<div class="empty" style="padding:20px"><p>${isCurrentMonth?'এই মাসে':mon+' '+yr+'-এ'} কারো Due নেই 🎉</p></div>`;
 
   // ফিল্টার করা মাসের মধ্যেই সীমাবদ্ধ — নাহলে মাসের ১ তারিখে (চলতি মাস
@@ -1284,7 +1319,8 @@ function renderDeposits(){
     <td data-label="Date">${fmtDate(p.date)}</td><td data-label="Member" style="font-weight:600">${escapeHtml(p.name)}</td>
     <td data-label="Amount" class="num" style="color:var(--success);font-weight:700">${money(p.amount)}</td>
     <td data-label="Method">${p.method}</td><td data-label="Notes" style="color:var(--muted)">${escapeHtml(p.notes)}</td>
-    <td data-label="">${isAdmin?`<button class="btn icon ghost sm" onclick="delDeposit('${p.id}')">${ICONS.TRASH}</button>`:''}</td></tr>`).join('')||emptyRow(6,'কোনো deposit নেই');
+    <td data-label="" style="white-space:nowrap">${isAdmin?`<button class="btn icon ghost sm" onclick="waDepositMsg('${p.id}')" title="WhatsApp-এ জানিয়ে দিন">${ICONS.WHATSAPP}</button>
+      <button class="btn icon ghost sm" onclick="delDeposit('${p.id}')">${ICONS.TRASH}</button>`:''}</td></tr>`).join('')||emptyRow(6,'কোনো deposit নেই');
 
   // কোন member এই ফিল্টার করা সময়ে (মাস/সব) মোট কত Deposit করলো — ছোট থেকে
   // বড় লিস্ট, ক্লিক করলে তার Ledger-এ চলে যায় বিস্তারিত দেখার জন্য।
@@ -1354,8 +1390,9 @@ function renderSummary(){
       <td data-label="Meal Cost" class="num" style="font-weight:700">${money(s.mealCost)}</td>
       <td data-label="Deposits (Meal)" class="num" style="color:var(--success)">${money(s.deposits)}</td>
       <td data-label="Balance" class="num" style="font-weight:700;color:${s.balance<0?'var(--danger)':'var(--success)'}">${money(Math.abs(s.balance))}</td>
-      <td data-label="Status">${badge(s.status)}</td></tr>`;
-  }).join('')||emptyRow(6,'কোনো member নেই');
+      <td data-label="Status">${badge(s.status)}</td>
+      <td data-label="">${isAdmin&&s.status==='Due'?`<button class="btn icon ghost sm" onclick="waDueReminder('${m.id}','${mon}',${yr})" title="WhatsApp-এ Due মনে করিয়ে দিন">${ICONS.WHATSAPP}</button>`:''}</td></tr>`;
+  }).join('')||emptyRow(7,'কোনো member নেই');
 }
 function openManagerModal(){
   populateMemberSelects();
