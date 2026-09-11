@@ -177,19 +177,13 @@
         <div class="card" id="meal-request-card" style="margin-bottom:16px;display:none">
           <div class="card-h" style="margin-bottom:8px"><h3>আগামীকালের মিল জানিয়ে দিন</h3></div>
           <p class="hint" id="mr-date-lab" style="margin-bottom:12px"></p>
-          <div class="fr2">
-            <div class="fg" style="margin-bottom:0">
-              <label>আপনার মিল সংখ্যা</label>
-              <input type="number" step="0.5" min="0" id="mr-meals" placeholder="যেমন ১">
-            </div>
-            <div class="fg" style="margin-bottom:0;justify-content:flex-end">
-              <label>&nbsp;</label>
-              <div style="display:flex;gap:6px">
-                <button class="btn sm" onclick="document.getElementById('mr-meals').value='0'">০ (বন্ধ)</button>
-                <button class="btn sm" onclick="document.getElementById('mr-meals').value='1'">১</button>
-                <button class="btn sm" onclick="document.getElementById('mr-meals').value='2'">২</button>
-              </div>
-            </div>
+          <div style="display:flex;gap:10px">
+            <label class="guest-toggle" id="mr-sokal-label" style="flex:1;justify-content:center;padding:12px;font-size:14px">
+              <input type="checkbox" id="mr-sokal" onchange="document.getElementById('mr-sokal-label').classList.toggle('active',this.checked)" style="width:16px;height:16px">সকাল
+            </label>
+            <label class="guest-toggle" id="mr-raat-label" style="flex:1;justify-content:center;padding:12px;font-size:14px">
+              <input type="checkbox" id="mr-raat" onchange="document.getElementById('mr-raat-label').classList.toggle('active',this.checked)" style="width:16px;height:16px">রাত
+            </label>
           </div>
           <button class="btn primary block" id="mr-save-btn" onclick="saveMealRequest()" style="margin-top:12px">জানিয়ে দিন</button>
           <div class="ibox" id="mr-status" style="margin-top:12px"></div>
@@ -405,6 +399,7 @@
           <input type="date" id="mm-inactive-to" placeholder="To">
         </div>
         <p class="hint" style="margin-top:4px">এই তারিখ থেকে এই তারিখ পর্যন্ত মেম্বার Inactive থাকবে — মিল বন্ধ থাকবে ও Daily Meal Entry-তে তার নাম আসবে না। খালি রাখলে সবসময় Active হিসেবে গণ্য হবে।</p>
+        <p class="hint" id="mm-inactive-expired-hint" style="display:none;margin-top:2px;color:var(--muted)">আগের Inactive Period-এর মেয়াদ শেষ হয়ে যাওয়ায় খালি দেখানো হচ্ছে — নতুন করে দরকার হলে বসান।</p>
       </div>
       <div class="fg">
         <label>Member Type</label>
@@ -527,9 +522,15 @@
     <div class="m-head"><h3 id="led-title">Member Ledger</h3><button class="btn icon ghost" onclick="closeM('ov-ledger')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
     <div class="m-body" style="flex:1">
       <div class="grid cols-2" id="led-stats" style="margin-bottom:16px"></div>
-      <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v7.5M4 2v4.2a2 2 0 0 0 4 0V2M6 13.5V22"/><path d="M18 2c-2.2 1-3.4 3.2-3.4 6.3 0 2.6 1.4 3.2 3.4 3.2V22"/></svg>সাম্প্রতিক Meal</h3></div>
+      <div class="fbar" style="margin-bottom:14px">
+        <label>Month:</label>
+        <select id="led-mon-f" onchange="renderLedgerLists()"><option value="">সব (সাম্প্রতিক ১০টা)</option></select>
+        <input type="number" id="led-yr-f" placeholder="Year" style="width:90px" onchange="renderLedgerLists()">
+      </div>
+      <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v7.5M4 2v4.2a2 2 0 0 0 4 0V2M6 13.5V22"/><path d="M18 2c-2.2 1-3.4 3.2-3.4 6.3 0 2.6 1.4 3.2 3.4 3.2V22"/></svg><span id="led-meals-title-tx">সাম্প্রতিক Meal</span></h3></div>
       <div id="led-meals" style="margin-bottom:16px"></div>
-      <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2.2"/><circle cx="12" cy="12" r="2.8"/><path d="M6 9v0M18 15v0"/></svg>সাম্প্রতিক Deposit</h3></div>
+      <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2.2"/><circle cx="12" cy="12" r="2.8"/><path d="M6 9v0M18 15v0"/></svg><span id="led-deposits-title-tx">সাম্প্রতিক Deposit</span></h3></div>
+      <div id="led-deposit-total" class="hint" style="margin-bottom:8px"></div>
       <div id="led-deposits"></div>
     </div>
   </div>

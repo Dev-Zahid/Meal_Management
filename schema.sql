@@ -114,7 +114,8 @@ create table if not exists meal_requests (
   date date not null,
   member_id text not null,
   member_name text not null,
-  meals numeric default 0,
+  sokal boolean default true,
+  raat boolean default true,
   primary key (mess_id, date, member_id)
 );
 

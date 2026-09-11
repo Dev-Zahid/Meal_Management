@@ -72,7 +72,15 @@ function openM(id){document.getElementById(id).classList.add('on');}
 function closeM(id){document.getElementById(id).classList.remove('on');}
 function setBusy(id,busy,html){const b=document.getElementById(id);if(!b)return;b.disabled=busy;if(busy){b.dataset.orig=b.innerHTML;b.innerHTML='<span class="spin"></span>';}else{b.innerHTML=html!==undefined?html:(b.dataset.orig||b.innerHTML);}}
 function badge(status){const map={Active:'gn',Inactive:'am',Left:'gy',Settled:'gn',Due:'rd',Advance:'bl'};return `<span class="badge ${map[status]||'gy'}">${status}</span>`;}
-function requireAdmin(){ if(!isAdmin){ toast('শুধু Owner বা এই মাসের Manager এটা করতে পারবেন','er'); return false; } return true; }
+// দৈনন্দিন ডেটা এন্ট্রি (Meal/Bazar/Other Expense/Deposit) শুধু ওই মাসের
+// Manager-ই এডিট করতে পারবেন — Owner নিজে সেই মাসের Manager না হলে এইসব
+// এডিট করতে পারবেন না (শুধু দেখতে পারবেন)। Members/Settings/Manager
+// assign করা এখনো শুধু Owner-এর (requireSuperAdmin দিয়ে গার্ড করা)।
+function requireManager(){ if(!isMonthManager){ toast('শুধু এই মাসের Manager এটা করতে পারবেন','er'); return false; } return true; }
+// কোন পেজে কার এডিট এক্সেস আছে — Members/Settings শুধু Owner-এর
+// (মেসের গঠন/অ্যাকাউন্ট সংক্রান্ত), বাকি সব দৈনন্দিন ডেটা এন্ট্রি পেজ
+// শুধু এই মাসের Manager-এর।
+function canEditPage(page){ return (page==='members'||page==='settings')?isSuperAdmin:isMonthManager; }
 function requireSuperAdmin(){ if(!isSuperAdmin){ toast('শুধু Owner (Super Admin) এটা করতে পারবেন','er'); return false; } return true; }
 function initials(name){return (name||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase();}
 const AV_COLORS=['#1F6F54','#DD9E33','#2E7B79','#C6553D','#6E5DA6','#3C7DBF','#B4652F','#4E8B3B'];
@@ -178,13 +186,22 @@ async function loadState(messId){
     dayNotes:(dn.data||[]).map(r=>({date:r.date,note:r.note||''})),
     // মেম্বারের আগের রাতে দেওয়া "আগামীকাল কয়টা মিল লাগবে" — Manager
     // আসল সংখ্যার সাথে মিলিয়ে চূড়ান্ত করে।
-    mealRequests:(mr.data||[]).map(r=>({date:r.date,mid:r.member_id,name:r.member_name,meals:Number(r.meals)})),
+    mealRequests:(mr.data||[]).map(r=>({date:r.date,mid:r.member_id,name:r.member_name,sokal:r.sokal!==false,raat:r.raat!==false})),
   };
 }
 function dayNoteFor(dateISO){ const r=(STATE.dayNotes||[]).find(x=>x.date===dateISO); return r?r.note:''; }
 // একটা নির্দিষ্ট মেম্বার একটা নির্দিষ্ট তারিখের জন্য মিল "চেয়েছিল" কিনা —
 // থাকলে সংখ্যা, না থাকলে null (অর্থাৎ "জানায়নি", ০ থেকে আলাদা)।
-function requestFor(mid,dateISO){ const r=(STATE.mealRequests||[]).find(x=>x.mid===mid&&x.date===dateISO); return r?N(r.meals):null; }
+// একটা নির্দিষ্ট মেম্বার একটা নির্দিষ্ট তারিখের জন্য কোন মিল (সকাল/রাত)
+// "চেয়েছিল" কিনা — থাকলে {sokal,raat} (true/false), না থাকলে null
+// (অর্থাৎ "জানায়নি")।
+function requestFor(mid,dateISO){ const r=(STATE.mealRequests||[]).find(x=>x.mid===mid&&x.date===dateISO); return r?{sokal:r.sokal!==false,raat:r.raat!==false}:null; }
+// অনুরোধের মোট সংখ্যা (সকাল+রাত মিলিয়ে ০/১/২) — Manager-এর গ্রিডে আসল
+// সংখ্যার সাথে মিলছে কিনা তুলনা করার জন্য।
+function requestTotal(mid,dateISO){ const r=requestFor(mid,dateISO); return r?(r.sokal?1:0)+(r.raat?1:0):null; }
+// অনুরোধ থেকে "সকাল ✓ · রাত ✗" স্টাইলের ব্যাজ বানায় — Manager স্পষ্ট
+// দেখতে পারে কোন মিল চলবে, কোনটা বন্ধ থাকবে (বাধ্যতামূলক একটা সংখ্যা না)।
+function reqBadgeHtml(req){ return `<span class="badge bl">সকাল ${req.sokal?'✓':'✗'} · রাত ${req.raat?'✓':'✗'}</span>`; }
 function tomorrowISO(){ const d=new Date(); d.setDate(d.getDate()+1); return toLocalISODate(d); }
 // Runs a Supabase write and shows a toast on failure. Returns true/false.
 async function dbOp(promise,failMsg){
@@ -199,7 +216,7 @@ function persist(msg){ if(msg)toast(msg,'ok'); refreshAll(); return true; }
    BOOT
    ═══════════════════════════════════════════════════════════ */
 let curPage='dashboard', mFilterStatus='All', mFilterFund='All', mSearch='', editMemberId=null, mealSelDate=todayISO();
-let isAdmin=false;        // isSuperAdmin || isMonthManager — edit rights across data pages (within a mess)
+let isAdmin=false;        // isSuperAdmin || isMonthManager — general "has some elevated role" flag, only used for the View Only badge. Actual edit gating uses isSuperAdmin or isMonthManager directly (see requireSuperAdmin/requireManager/canEditPage).
 let isSuperAdmin=false;   // the Owner account created at setup — only role that can touch Settings (within a mess)
 let isMonthManager=false; // whoever is assigned Manager for the CURRENT month
 let currentMember=null;   // the logged-in member's row
@@ -668,14 +685,14 @@ function goTo(p){
   document.querySelectorAll('.page').forEach(s=>s.classList.toggle('on',s.dataset.page===p));
   document.getElementById('page-title').textContent=PG[p];
   const ab=document.getElementById('add-btn');
-  if(PG_ADD[p]&&isAdmin){ab.style.display='';document.getElementById('add-tx').textContent=PG_ADD[p];}else{ab.style.display='none';}
+  if(PG_ADD[p]&&canEditPage(p)){ab.style.display='';document.getElementById('add-tx').textContent=PG_ADD[p];}else{ab.style.display='none';}
   renderPage(p);
   closeDrawer();
 }
 function renderPage(p){
   if(p==='dashboard')renderDash();
   else if(p==='members')renderMembers();
-  else if(p==='meals'){document.getElementById('me-date').value=mealSelDate;loadMealGrid();renderHeatmap();}
+  else if(p==='meals'){document.getElementById('me-date').value=mealSelDate;loadMealGrid();}
   else if(p==='bazar')renderBazar();
   else if(p==='other')renderOther();
   else if(p==='deposits')renderDeposits();
@@ -684,7 +701,7 @@ function renderPage(p){
 }
 function refreshAll(){populateMemberSelects();renderPage(curPage);if(currentMember)checkCarryForwardDue();}
 function doAdd(){
-  if(!isAdmin)return;
+  if(!canEditPage(curPage))return;
   if(curPage==='members')openMemberModal();
   else if(curPage==='bazar')openBazarModal();
   else if(curPage==='other')openOtherModal();
@@ -766,11 +783,19 @@ function renderMealRequestCard(){
   const tmw=tomorrowISO();
   document.getElementById('mr-date-lab').textContent='আগামীকাল, '+fmtDate(tmw)+' — রাত ১২টার মধ্যে জানিয়ে দিন, সেই হিসাবে বাজার/রান্না ঠিক হবে।';
   const existing=requestFor(currentMember.id,tmw);
-  document.getElementById('mr-meals').value=existing!==null?existing:'';
+  // আগে কিছু জানানো না থাকলে ডিফল্ট দুটোই চেক করা থাকে (স্বাভাবিক দিন
+  // ধরে নিয়ে) — বন্ধ রাখতে চাইলে মেম্বার নিজেই আনচেক করে দেবে।
+  const sokal=existing?existing.sokal:true, raat=existing?existing.raat:true;
+  document.getElementById('mr-sokal').checked=sokal;
+  document.getElementById('mr-raat').checked=raat;
+  document.getElementById('mr-sokal-label').classList.toggle('active',sokal);
+  document.getElementById('mr-raat-label').classList.toggle('active',raat);
   const statusEl=document.getElementById('mr-status');
   if(existing!==null){
     statusEl.className='ibox info';
-    statusEl.innerHTML=ICONS.CHECK+`<span>আপনি জানিয়েছেন: <b>${existing}</b> মিল। বদলাতে চাইলে নতুন সংখ্যা লিখে আবার Save করুন।</span>`;
+    const parts=[]; if(existing.sokal)parts.push('সকাল'); if(existing.raat)parts.push('রাত');
+    const summary=parts.length?parts.join(' + '):'কোনোটাই না (কাল মিল বন্ধ)';
+    statusEl.innerHTML=ICONS.CHECK+`<span>আপনি জানিয়েছেন: <b>${summary}</b>। বদলাতে চাইলে চেকবক্স বদলে আবার Save করুন।</span>`;
   } else {
     statusEl.className='ibox warn';
     statusEl.innerHTML=ICONS.ALERT+'<span>এখনো জানাননি — রাত ১২টার আগে জানিয়ে দিন, নাহলে রান্নার হিসাবে আপনার মিল ধরা হবে না।</span>';
@@ -779,15 +804,14 @@ function renderMealRequestCard(){
 async function saveMealRequest(){
   if(!currentMember)return;
   const tmw=tomorrowISO();
-  const raw=document.getElementById('mr-meals').value.trim();
-  if(raw===''||isNaN(Number(raw))||N(raw)<0){ toast('মিল সংখ্যা ঠিকভাবে দিন (০ বা তার বেশি)','er'); return; }
-  const meals=N(raw);
+  const sokal=document.getElementById('mr-sokal').checked;
+  const raat=document.getElementById('mr-raat').checked;
   setBusy('mr-save-btn',true);
-  const ok=await dbOp(supa.from('meal_requests').upsert({mess_id:currentMessId,date:tmw,member_id:currentMember.id,member_name:currentMember.name,meals},{onConflict:'mess_id,date,member_id'}),'জানানো যায়নি');
+  const ok=await dbOp(supa.from('meal_requests').upsert({mess_id:currentMessId,date:tmw,member_id:currentMember.id,member_name:currentMember.name,sokal,raat},{onConflict:'mess_id,date,member_id'}),'জানানো যায়নি');
   setBusy('mr-save-btn',false,'জানিয়ে দিন');
   if(ok){
     const idx=STATE.mealRequests.findIndex(x=>x.mid===currentMember.id&&x.date===tmw);
-    const rec={date:tmw,mid:currentMember.id,name:currentMember.name,meals};
+    const rec={date:tmw,mid:currentMember.id,name:currentMember.name,sokal,raat};
     if(idx>=0)STATE.mealRequests[idx]=rec; else STATE.mealRequests.push(rec);
     toast('জানানো হয়েছে ✅','ok');
     renderMealRequestCard();
@@ -848,7 +872,7 @@ function renderDash(){
     `<div class="led-row"><span style="display:flex;align-items:center;gap:9px">${avatar(m)}${escapeHtml(m.name)}</span>
      <span style="display:flex;align-items:center;gap:8px">
        <b style="color:var(--danger)">${money(Math.abs(s.balance))}</b>
-       ${isAdmin?`<button class="btn icon ghost sm" onclick="waDueReminder('${m.id}','${mon}',${yr})" title="WhatsApp-এ Due মনে করিয়ে দিন">${ICONS.WHATSAPP}</button>`:''}
+       ${isMonthManager?`<button class="btn icon ghost sm" onclick="waDueReminder('${m.id}','${mon}',${yr})" title="WhatsApp-এ Due মনে করিয়ে দিন">${ICONS.WHATSAPP}</button>`:''}
      </span></div>`).join('')
     :`<div class="empty" style="padding:20px"><p>${isCurrentMonth?'এই মাসে':mon+' '+yr+'-এ'} কারো Due নেই 🎉</p></div>`;
 
@@ -873,12 +897,12 @@ function renderMembers(){
   document.getElementById('mem-body').innerHTML=list.map(m=>`<tr>
     <td data-label="Member"><span style="display:flex;align-items:center;gap:10px;cursor:pointer" onclick="openLedger('${m.id}')">${avatar(m)}<b>${escapeHtml(m.name)}</b></span></td>
     <td data-label="Phone">${escapeHtml(m.phone)||'—'}</td>
-    <td data-label="Status">${badge(m.status)}${isInactiveOn(m,todayISO())?` <span class="badge am" title="${fmtDate(m.inactiveFrom)} – ${fmtDate(m.inactiveTo)}">Inactive Now</span>`:m.inactiveFrom&&m.inactiveTo?` <span class="badge gy" style="font-size:10px">${fmtDate(m.inactiveFrom)}–${fmtDate(m.inactiveTo)}</span>`:''}</td>
+    <td data-label="Status">${badge(m.status)}${isInactiveOn(m,todayISO())?` <span class="badge am" title="${fmtDate(m.inactiveFrom)} – ${fmtDate(m.inactiveTo)}">Inactive Now</span>`:(m.inactiveFrom&&m.inactiveTo&&m.inactiveTo>=todayISO())?` <span class="badge gy" style="font-size:10px">${fmtDate(m.inactiveFrom)}–${fmtDate(m.inactiveTo)}</span>`:''}</td>
     <td data-label="Joined">${fmtDate(m.joined)}</td>
     <td data-label="Notes" style="color:var(--muted)">${escapeHtml(m.notes)}${m.inMealFund===false?' <span class="badge gy" style="font-size:10px">Meal Fund-এ নেই</span>':''}${m.inOtherFund===false?' <span class="badge gy" style="font-size:10px">Other Fund-এ নেই</span>':''}</td>
     <td data-label="Actions"><div style="display:flex;gap:6px;justify-content:flex-end">
       <button class="btn icon ghost sm" onclick="openLedger('${m.id}')" title="Ledger">${ICONS.HISTORY}</button>
-      ${isAdmin?`<button class="btn icon ghost sm" onclick="openMemberModal('${m.id}')" title="Edit">${ICONS.EDIT}</button>
+      ${isSuperAdmin?`<button class="btn icon ghost sm" onclick="openMemberModal('${m.id}')" title="Edit">${ICONS.EDIT}</button>
       <button class="btn icon ghost sm" onclick="delMember('${m.id}')" title="Delete">${ICONS.TRASH}</button>`:''}
     </div></td></tr>`).join('')||emptyRow(6,'কোনো member নেই — Add Member চাপুন');
 }
@@ -893,7 +917,15 @@ function openMemberModal(id){
     const m=STATE.members.find(x=>x.id===id);
     document.getElementById('mm-name').value=m.name;document.getElementById('mm-phone').value=m.phone;
     document.getElementById('mm-status').value=m.status;document.getElementById('mm-joined').value=m.joined||todayISO();
-    document.getElementById('mm-inactive-from').value=m.inactiveFrom||'';document.getElementById('mm-inactive-to').value=m.inactiveTo||'';
+    // Inactive Period-এর মেয়াদ (To তারিখ) ইতিমধ্যে পার হয়ে গেলে ফর্মে খালি
+    // দেখানো হয় — পুরনো তারিখ চোখে পড়ে থাকলে বিভ্রান্তির কারণ হতো। এটা
+    // Save করলে স্বয়ংক্রিয়ভাবেই DB থেকেও মুছে যাবে (আলাদা কোনো
+    // cleanup/migration লাগবে না) কারণ saveMember() ফর্মে যা থাকে তাই সেভ করে।
+    const inactiveExpired=m.inactiveTo&&m.inactiveTo<todayISO();
+    document.getElementById('mm-inactive-from').value=inactiveExpired?'':(m.inactiveFrom||'');
+    document.getElementById('mm-inactive-to').value=inactiveExpired?'':(m.inactiveTo||'');
+    const expHint=document.getElementById('mm-inactive-expired-hint');
+    if(expHint)expHint.style.display=inactiveExpired?'':'none';
     document.getElementById('mm-meal-fund').checked=m.inMealFund!==false;
     document.getElementById('mm-other-fund').checked=m.inOtherFund!==false;
     document.getElementById('mm-notes').value=m.notes;
@@ -902,6 +934,8 @@ function openMemberModal(id){
     document.getElementById('mm-name').value='';document.getElementById('mm-phone').value='';
     document.getElementById('mm-status').value='Active';document.getElementById('mm-joined').value=todayISO();
     document.getElementById('mm-inactive-from').value='';document.getElementById('mm-inactive-to').value='';
+    const expHint2=document.getElementById('mm-inactive-expired-hint');
+    if(expHint2)expHint2.style.display='none';
     document.getElementById('mm-meal-fund').checked=true;
     document.getElementById('mm-other-fund').checked=true;
     document.getElementById('mm-notes').value='';
@@ -910,7 +944,7 @@ function openMemberModal(id){
   setBusy('save-mem',false,ICONS.CHECK+'Save');openM('ov-member');
 }
 async function saveMember(){
-  if(!requireAdmin())return;
+  if(!requireSuperAdmin())return;
   const name=document.getElementById('mm-name').value.trim();
   if(!name){toast('নাম দিন','er');return;}
   const phone=document.getElementById('mm-phone').value.trim();
@@ -952,7 +986,7 @@ async function saveMember(){
   if(ok){ closeM('ov-member'); persist(editMemberId?'Member আপডেট হয়েছে':'Member যোগ হয়েছে'); }
 }
 async function delMember(id){
-  if(!requireAdmin())return;
+  if(!requireSuperAdmin())return;
   if(id===STATE.settings.ownerMemberId){ toast('Owner account ডিলিট করা যাবে না','er'); return; }
   if(!confirm('এই member ডিলিট করবেন? তার আগের meal/deposit রেকর্ড থেকে যাবে।'))return;
   const ok=await dbOp(supa.from('members').delete().eq('id',id).eq('mess_id',currentMessId),'Member ডিলিট করা যায়নি');
@@ -960,8 +994,10 @@ async function delMember(id){
 }
 
 /* ── Member ledger side-sheet ──────────────────────────────── */
+let ledgerMemberId=null; // বর্তমানে খোলা Ledger-এর member id — মাস-ফিল্টার বদলালে এটা দিয়েই আবার রেন্ডার হয়
 function openLedger(id){
   const m=STATE.members.find(x=>x.id===id); if(!m)return;
+  ledgerMemberId=id;
   document.getElementById('led-title').innerHTML=`<span style="display:flex;align-items:center;gap:9px">${avatar(m)}${escapeHtml(m.name)}</span>`;
   const mon=curMon(),yr=curYr();
   const s=memberSummary(id,mon,yr);
@@ -976,11 +1012,42 @@ function openLedger(id){
     inOF?[money(os.balance<0?Math.abs(os.balance):os.balance),os.balance<0?'Other Fund Due':'Other Fund Advance',os.balance<0?'c-danger':'c-success']:['—','Other Fund-এ নেই','c-accent'],
     [m.status,'বর্তমান Status','c-accent']
   ].map(([v,l,c])=>`<div class="card stat ${c}" style="padding:12px"><div class="lab">${l}</div><div class="val" style="font-size:16px">${v}</div></div>`).join('');
-  const meals=[...STATE.mealEntries].filter(e=>e.mid===id).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10);
-  document.getElementById('led-meals').innerHTML=meals.map(e=>`<div class="led-row"><span>${fmtDate(e.date)}</span><b class="num">${(N(e.meals)+N(e.guest)).toFixed(1).replace(/\.0$/,'')} meal</b></div>`).join('')||'<p class="hint">কোনো এন্ট্রি নেই</p>';
-  const deps=[...STATE.deposits].filter(p=>p.mid===id).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10);
-  document.getElementById('led-deposits').innerHTML=deps.map(p=>`<div class="led-row"><span>${fmtDate(p.date)} · ${p.method}</span><b class="num" style="color:var(--success)">${money(p.amount)}</b></div>`).join('')||'<p class="hint">কোনো deposit নেই</p>';
+  // মাস-ফিল্টার প্রতিবার নতুন মেম্বারের Ledger খোলার সময় "সব"-এ রিসেট হয়
+  const monEl=document.getElementById('led-mon-f'), yrEl=document.getElementById('led-yr-f');
+  if(monEl){ monEl.innerHTML='<option value="">সব (সাম্প্রতিক ১০টা)</option>'+MONTHS.map(mo=>`<option>${mo}</option>`).join(''); monEl.value=''; }
+  if(yrEl)yrEl.value='';
+  renderLedgerLists();
   openM('ov-ledger');
+}
+// Ledger-এর Meal/Deposit লিস্ট — ফিল্টার না থাকলে সাম্প্রতিক ১০টা (আগের
+// আচরণ), মাস/বছর বাছলে সেই পুরো মাসের সবগুলো এন্ট্রি + সেই মাসে মোট কত
+// Deposit করলো তার যোগফল দেখায় (যেমনঃ "শুধু আগস্টে কত দিলো" জানার জন্য)।
+function renderLedgerLists(){
+  const id=ledgerMemberId; if(!id)return;
+  const monEl=document.getElementById('led-mon-f'), yrEl=document.getElementById('led-yr-f');
+  const mon=monEl?monEl.value:'', yr=yrEl?N(yrEl.value):0;
+  const filtered=!!(mon||yr);
+  let meals=[...STATE.mealEntries].filter(e=>e.mid===id);
+  let deps=[...STATE.deposits].filter(p=>p.mid===id);
+  if(mon){
+    meals=meals.filter(e=>{const d=new Date(e.date+'T00:00:00');return MONTHS[d.getMonth()]===mon;});
+    deps=deps.filter(p=>{const d=new Date(p.date+'T00:00:00');return MONTHS[d.getMonth()]===mon;});
+  }
+  if(yr){
+    meals=meals.filter(e=>{const d=new Date(e.date+'T00:00:00');return d.getFullYear()===yr;});
+    deps=deps.filter(p=>{const d=new Date(p.date+'T00:00:00');return d.getFullYear()===yr;});
+  }
+  meals.sort((a,b)=>b.date.localeCompare(a.date));
+  deps.sort((a,b)=>b.date.localeCompare(a.date));
+  const periodLabel=(mon?mon:'')+(mon&&yr?' ':'')+(yr?yr:'')||'সব';
+  document.getElementById('led-meals-title-tx').textContent=filtered?'Meal ('+periodLabel+')':'সাম্প্রতিক Meal';
+  document.getElementById('led-deposits-title-tx').textContent=filtered?'Deposit ('+periodLabel+')':'সাম্প্রতিক Deposit';
+  const mealsShown=filtered?meals:meals.slice(0,10);
+  const depsShown=filtered?deps:deps.slice(0,10);
+  document.getElementById('led-meals').innerHTML=mealsShown.map(e=>`<div class="led-row"><span>${fmtDate(e.date)}</span><b class="num">${(N(e.meals)+N(e.guest)).toFixed(1).replace(/\.0$/,'')} meal</b></div>`).join('')||'<p class="hint">কোনো এন্ট্রি নেই</p>';
+  const depTotal=deps.reduce((a,p)=>a+N(p.amount),0);
+  document.getElementById('led-deposit-total').textContent=filtered?`${periodLabel}-এ মোট Deposit: ${money(depTotal)} (${deps.length}টা এন্ট্রি)`:'';
+  document.getElementById('led-deposits').innerHTML=depsShown.map(p=>`<div class="led-row"><span>${fmtDate(p.date)} · ${p.method}</span><b class="num" style="color:var(--success)">${money(p.amount)}</b></div>`).join('')||'<p class="hint">কোনো deposit নেই</p>';
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -990,19 +1057,23 @@ function setMealDate(iso){mealSelDate=iso;document.getElementById('me-date').val
 function shiftMealDate(delta){const d=new Date(mealSelDate+'T00:00:00');d.setDate(d.getDate()+delta);setMealDate(toLocalISODate(d));}
 function loadMealGrid(){
   mealSelDate=document.getElementById('me-date').value||todayISO();
+  // হিটম্যাপে কোন তারিখ বাছা আছে তা সবসময় সিঙ্কে রাখতে — আগে শুধু পেজ
+  // প্রথমবার খোলার সময় একবার আঁকা হতো, তাই হিটম্যাপে ক্লিক করলে বা
+  // Prev/Next চাপলেও কোন তারিখ বাছা আছে বোঝা যেত না (হাইলাইট বদলাতো না)।
+  renderHeatmap();
   const lab=document.getElementById('meal-date-lab');
   lab.textContent=mealSelDate===todayISO()?'আজ · '+fmtDate(mealSelDate):fmtDate(mealSelDate);
-  document.getElementById('meal-quickfill').style.display=isAdmin?'':'none';
-  document.getElementById('save-meal-grid').style.display=isAdmin?'':'none';
+  document.getElementById('meal-quickfill').style.display=isMonthManager?'':'none';
+  document.getElementById('save-meal-grid').style.display=isMonthManager?'':'none';
   // এই তারিখের ঐচ্ছিক নোট (যেমনঃ বাজার হয়নি তাই মিল বন্ধ, রান্নার লোক
-  // অনুপস্থিত) — শুধু তথ্যের জন্য, সবাই দেখতে পারবে, এডিট শুধু Admin।
+  // অনুপস্থিত) — শুধু তথ্যের জন্য, সবাই দেখতে পারবে, এডিট শুধু এই মাসের Manager।
   const dnEl=document.getElementById('day-note');
   if(dnEl){
     dnEl.value=dayNoteFor(mealSelDate);
-    dnEl.disabled=!isAdmin;
+    dnEl.disabled=!isMonthManager;
   }
   const dnBtn=document.getElementById('save-day-note');
-  if(dnBtn)dnBtn.style.display=isAdmin?'':'none';
+  if(dnBtn)dnBtn.style.display=isMonthManager?'':'none';
   // Only members who had already joined on/before the selected date, who
   // aren't on a manager-marked inactive period covering this date, and who
   // aren't a "Other Fund only" member (in_meal_fund=false) are eligible —
@@ -1014,11 +1085,11 @@ function loadMealGrid(){
   const grid=document.getElementById('meal-grid');
   let noticeHtml=notYetJoined.length?`<div class="ibox warn" style="margin-bottom:10px">${ICONS.INFO}<div>${notYetJoined.map(m=>escapeHtml(m.name)+' ('+fmtDate(m.joined)+' থেকে যোগ)').join(', ')} — এই তারিখে এখনো মেসে যোগ দেননি, তাই মিল যোগ করা যাচ্ছে না।</div></div>`:'';
   if(inactiveNow.length)noticeHtml+=`<div class="ibox warn" style="margin-bottom:10px">${ICONS.INFO}<div>${inactiveNow.map(m=>escapeHtml(m.name)+' ('+fmtDate(m.inactiveFrom)+' – '+fmtDate(m.inactiveTo)+' পর্যন্ত Inactive)').join(', ')} — এই তারিখে Inactive হিসেবে চিহ্নিত, তাই মিল যোগ করা যাচ্ছে না।</div></div>`;
-  if(!isAdmin){
+  if(!isMonthManager){
     grid.innerHTML=noticeHtml+eligible.map(m=>{
       const ex=STATE.mealEntries.find(e=>e.mid===m.id&&e.date===mealSelDate);
       const req=requestFor(m.id,mealSelDate);
-      const reqBadge=req!==null?`<span class="badge bl">চেয়েছে: ${req}</span>`:'';
+      const reqBadge=req!==null?reqBadgeHtml(req):'';
       return `<div class="meal-row"><div class="nm">${avatar(m)}${escapeHtml(m.name)}${reqBadge}</div>
         <div style="font-weight:700" class="num">${ex?N(ex.meals):'—'} meal${ex&&N(ex.guest)>0?` + ${N(ex.guest)} guest`:''}</div></div>`;
     }).join('')||`<div class="empty">${ICONS.EMPTY}<p>কোনো Active member নেই</p></div>`;
@@ -1030,8 +1101,9 @@ function loadMealGrid(){
     // মেম্বার আগের রাতে যা "চেয়েছিল" (মেল রিকোয়েস্ট) — থাকলে দেখায়, আসল
     // সংখ্যা তার থেকে ভিন্ন হলে নিচে একটা বাধ্যতামূলক নোট ফিল্ড খুলে যায়।
     const req=requestFor(m.id,mealSelDate);
-    const reqBadge=req!==null?`<span class="badge bl">চেয়েছে: ${req}</span>`:`<span class="badge gy">জানায়নি</span>`;
-    const initialMismatch=req!==null&&ex&&N(ex.meals)!==req;
+    const reqBadge=req!==null?reqBadgeHtml(req):`<span class="badge gy">জানায়নি</span>`;
+    const reqTotal=requestTotal(m.id,mealSelDate);
+    const initialMismatch=reqTotal!==null&&ex&&N(ex.meals)!==reqTotal;
     return `<div class="meal-row">
       <div class="nm">${avatar(m)}${escapeHtml(m.name)}${reqBadge}</div>
       <div class="fld"><label>Meals</label><input type="number" step="0.5" min="0" id="mg-${m.id}" value="${ex?ex.meals:''}" placeholder="2" oninput="checkMealMismatch('${m.id}')"></div>
@@ -1041,7 +1113,7 @@ function loadMealGrid(){
       </label>
       <div class="fld" id="gf-${m.id}" style="${hasGuest?'':'display:none'}"><label>Qty</label><input type="number" step="0.5" min="0" id="mgg-${m.id}" value="${hasGuest?ex.guest:''}" placeholder="1"></div>
       <div class="fg" id="mn-wrap-${m.id}" style="flex-basis:100%;margin:2px 0 0;${initialMismatch?'':'display:none'}">
-        <label style="color:var(--danger)">অনুরোধের (${req}) সাথে মিলছে না — কেন ভিন্ন হলো লিখুন *</label>
+        <label style="color:var(--danger)">অনুরোধের (সকাল ${req&&req.sokal?'✓':'✗'} · রাত ${req&&req.raat?'✓':'✗'} = ${reqTotal}) সাথে মিলছে না — কেন ভিন্ন হলো লিখুন *</label>
         <input type="text" id="mn-${m.id}" value="${escapeHtml(ex?ex.notes:'')}" placeholder="যেমনঃ ও বাসায় ছিল না তাই মিল বাদ, বা অতিরিক্ত মিল খেয়েছে">
       </div>
     </div>`;
@@ -1053,7 +1125,7 @@ function loadMealGrid(){
 // রাখে।
 function checkMealMismatch(mid){
   const wrap=document.getElementById('mn-wrap-'+mid); if(!wrap)return;
-  const req=requestFor(mid,mealSelDate);
+  const req=requestTotal(mid,mealSelDate);
   const valEl=document.getElementById('mg-'+mid);
   const val=valEl&&valEl.value!==''?N(valEl.value):null;
   const mismatch=(req!==null&&val!==null&&val!==req);
@@ -1073,7 +1145,7 @@ function quickFillMeals(val){
   toast(val>0?'সবাইকে '+val+' Meal দেওয়া হয়েছে':'সবাইকে Off দেওয়া হয়েছে','ok');
 }
 async function saveMealGrid(){
-  if(!requireAdmin())return;
+  if(!requireManager())return;
   // Only eligible members can be saved (matches loadMealGrid — Active,
   // already joined, not on a temporary-inactive window, and part of the
   // Meal Fund).
@@ -1084,7 +1156,7 @@ async function saveMealGrid(){
   // করে নেয়, একজনেরও বাকি থাকলে পুরো Save আটকে দেয়।
   for(const m of members){
     const meals=N(document.getElementById('mg-'+m.id).value);
-    const req=requestFor(m.id,mealSelDate);
+    const req=requestTotal(m.id,mealSelDate);
     const noteEl=document.getElementById('mn-'+m.id);
     if(req!==null&&meals!==req&&(!noteEl||!noteEl.value.trim())){
       toast(m.name+'-এর মিল অনুরোধের ('+req+') সাথে মিলছে না — কেন ভিন্ন হলো নোটে লিখুন','er');
@@ -1129,7 +1201,7 @@ async function saveMealGrid(){
 // day_notes টেবিলে (mess_id, date) অনুযায়ী upsert হয়, মিল এন্ট্রি থেকে
 // সম্পূর্ণ আলাদা রেকর্ড (কোনো নির্দিষ্ট মেম্বারের সাথে যুক্ত না)।
 async function saveDayNote(){
-  if(!requireAdmin())return;
+  if(!requireManager())return;
   const el=document.getElementById('day-note'); if(!el)return;
   const note=el.value.trim();
   setBusy('save-day-note',true);
@@ -1171,7 +1243,7 @@ function renderMealRecent(){
   }).join('')||emptyRow(4,'কোনো entry নেই');
 }
 async function delMealEntry(id){
-  if(!requireAdmin())return; if(!confirm('এই entry ডিলিট করবেন?'))return;
+  if(!requireManager())return; if(!confirm('এই entry ডিলিট করবেন?'))return;
   const ok=await dbOp(supa.from('meal_entries').delete().eq('id',id).eq('mess_id',currentMessId),'ডিলিট করা যায়নি');
   if(ok){ STATE.mealEntries=STATE.mealEntries.filter(e=>e.id!==id); persist('ডিলিট হয়েছে'); }
 }
@@ -1215,7 +1287,7 @@ function renderBazar(){
     <td data-label="Date">${fmtDate(e.date)}</td><td data-label="Bought By" style="font-weight:600">${escapeHtml(e.by)||'—'}</td>
     <td data-label="Amount" class="num" style="color:var(--danger);font-weight:700">${money(e.amount)}</td>
     <td data-label="Notes" style="color:var(--muted)">${escapeHtml(e.notes)}</td>
-    <td data-label="">${isAdmin?`<button class="btn icon ghost sm" onclick="delBazar('${e.id}')">${ICONS.TRASH}</button>`:''}</td></tr>`).join('')||emptyRow(5,'কোনো bazar expense নেই');
+    <td data-label="">${isMonthManager?`<button class="btn icon ghost sm" onclick="delBazar('${e.id}')">${ICONS.TRASH}</button>`:''}</td></tr>`).join('')||emptyRow(5,'কোনো bazar expense নেই');
 }
 function openBazarModal(){
   document.getElementById('bzd').value=todayISO();document.getElementById('bzamt').value='';document.getElementById('bznote').value='';
@@ -1286,7 +1358,7 @@ function renderBazarItems(){
   }
 }
 async function saveBazar(){
-  if(!requireAdmin())return;
+  if(!requireManager())return;
   const amt=N(document.getElementById('bzamt').value);
   if(amt<=0){toast('Amount দিন','er');return;}
   const bySel=document.getElementById('bzby').value;
@@ -1299,7 +1371,7 @@ async function saveBazar(){
   if(ok){ STATE.bazarExp.push(rec); closeM('ov-bazar'); persist('Bazar expense যোগ হয়েছে'); }
 }
 async function delBazar(id){
-  if(!requireAdmin())return; if(!confirm('ডিলিট করবেন?'))return;
+  if(!requireManager())return; if(!confirm('ডিলিট করবেন?'))return;
   const ok=await dbOp(supa.from('bazar_expenses').delete().eq('id',id).eq('mess_id',currentMessId),'ডিলিট করা যায়নি');
   if(ok){ STATE.bazarExp=STATE.bazarExp.filter(e=>e.id!==id); persist('ডিলিট হয়েছে'); }
 }
@@ -1308,7 +1380,7 @@ async function delBazar(id){
    OTHER EXPENSES
    ═══════════════════════════════════════════════════════════ */
 function renderOther(){
-  const addBtn=document.getElementById('ot-dep-add-btn'); if(addBtn)addBtn.style.display=isAdmin?'':'none';
+  const addBtn=document.getElementById('ot-dep-add-btn'); if(addBtn)addBtn.style.display=isMonthManager?'':'none';
   const mon=document.getElementById('ot-mon-f').value,yr=N(document.getElementById('ot-yr-f').value);
   let list=STATE.otherExp;
   if(mon)list=list.filter(e=>{const d=new Date(e.date+'T00:00:00');return MONTHS[d.getMonth()]===mon;});
@@ -1322,7 +1394,7 @@ function renderOther(){
     <td data-label="Date">${fmtDate(e.date)}</td><td data-label="Title" style="font-weight:600">${escapeHtml(e.title)}</td>
     <td data-label="Amount" class="num" style="color:var(--accent);font-weight:700">${money(e.amount)}</td>
     <td data-label="Notes" style="color:var(--muted)">${escapeHtml(e.notes)}</td>
-    <td data-label="">${isAdmin?`<button class="btn icon ghost sm" onclick="delOther('${e.id}')">${ICONS.TRASH}</button>`:''}</td></tr>`).join('')||emptyRow(5,'কোনো other expense নেই');
+    <td data-label="">${isMonthManager?`<button class="btn icon ghost sm" onclick="delOther('${e.id}')">${ICONS.TRASH}</button>`:''}</td></tr>`).join('')||emptyRow(5,'কোনো other expense নেই');
 
   // ── Other Fund টাকা কালেকশন — মিলের হিসাব থেকে সম্পূর্ণ আলাদা, কিন্তু
   // এই পেজের বাকি সব অংশের মতোই একই Month/Year ফিল্টার (উপরে) ব্যবহার
@@ -1341,7 +1413,7 @@ function renderOther(){
       <td data-label="Date">${fmtDate(p.date)}</td><td data-label="Member" style="font-weight:600">${escapeHtml(p.name)}</td>
       <td data-label="Amount" class="num" style="color:var(--success);font-weight:700">${money(p.amount)}</td>
       <td data-label="Notes" style="color:var(--muted)">${escapeHtml(p.notes)}</td>
-      <td data-label="">${isAdmin?`<button class="btn icon ghost sm" onclick="delDeposit('${p.id}')">${ICONS.TRASH}</button>`:''}</td></tr>`).join('')||emptyRow(5,'কোনো Other Fund deposit নেই');
+      <td data-label="">${isMonthManager?`<button class="btn icon ghost sm" onclick="delDeposit('${p.id}')">${ICONS.TRASH}</button>`:''}</td></tr>`).join('')||emptyRow(5,'কোনো Other Fund deposit নেই');
     const memberTitle=document.getElementById('ot-member-title');
     if(memberTitle)memberTitle.textContent='Member-ভিত্তিক Other Fund হিসাব ('+(mon?mon+(yr?' '+yr:''):'সব সময়')+')';
     const memberBody=document.getElementById('ot-member-body');
@@ -1358,7 +1430,7 @@ function renderOther(){
   }
 }
 function openOtherDepositModal(){
-  if(!requireAdmin())return;
+  if(!requireManager())return;
   depModalType='Other';
   populateMemberSelects();
   const ofMembers=otherFundMembers();
@@ -1374,7 +1446,7 @@ function openOtherModal(){
   setBusy('save-ot',false,ICONS.CHECK+'Save');openM('ov-other');
 }
 async function saveOther(){
-  if(!requireAdmin())return;
+  if(!requireManager())return;
   const title=document.getElementById('ottitle').value.trim(), amt=N(document.getElementById('otamt').value);
   if(!title){toast('Title দিন','er');return;}
   if(amt<=0){toast('Amount দিন','er');return;}
@@ -1385,7 +1457,7 @@ async function saveOther(){
   if(ok){ STATE.otherExp.push(rec); closeM('ov-other'); persist('Other expense যোগ হয়েছে'); }
 }
 async function delOther(id){
-  if(!requireAdmin())return; if(!confirm('ডিলিট করবেন?'))return;
+  if(!requireManager())return; if(!confirm('ডিলিট করবেন?'))return;
   const ok=await dbOp(supa.from('other_expenses').delete().eq('id',id).eq('mess_id',currentMessId),'ডিলিট করা যায়নি');
   if(ok){ STATE.otherExp=STATE.otherExp.filter(e=>e.id!==id); persist('ডিলিট হয়েছে'); }
 }
@@ -1410,7 +1482,7 @@ function renderDeposits(){
     <td data-label="Date">${fmtDate(p.date)}</td><td data-label="Member" style="font-weight:600">${escapeHtml(p.name)}</td>
     <td data-label="Amount" class="num" style="color:var(--success);font-weight:700">${money(p.amount)}</td>
     <td data-label="Method">${p.method}</td><td data-label="Notes" style="color:var(--muted)">${escapeHtml(p.notes)}</td>
-    <td data-label="" style="white-space:nowrap">${isAdmin?`<button class="btn icon ghost sm" onclick="waDepositMsg('${p.id}')" title="WhatsApp-এ জানিয়ে দিন">${ICONS.WHATSAPP}</button>
+    <td data-label="" style="white-space:nowrap">${isMonthManager?`<button class="btn icon ghost sm" onclick="waDepositMsg('${p.id}')" title="WhatsApp-এ জানিয়ে দিন">${ICONS.WHATSAPP}</button>
       <button class="btn icon ghost sm" onclick="delDeposit('${p.id}')">${ICONS.TRASH}</button>`:''}</td></tr>`).join('')||emptyRow(6,'কোনো deposit নেই');
 
   // কোন member এই ফিল্টার করা সময়ে (মাস/সব) মোট কত Deposit করলো — ছোট থেকে
@@ -1442,7 +1514,7 @@ function openDepositModal(){
   setBusy('save-dep',false,ICONS.CHECK+'Save');openM('ov-deposit');
 }
 async function saveDeposit(){
-  if(!requireAdmin())return;
+  if(!requireManager())return;
   const mid=document.getElementById('dep-member').value, amtRaw=document.getElementById('depamt').value.trim();
   if(!mid){toast('Select Member','er');return;}
   if(amtRaw===''||isNaN(Number(amtRaw))){toast('একটা সঠিক Amount দিন','er');return;}
@@ -1455,7 +1527,7 @@ async function saveDeposit(){
   if(ok){ STATE.deposits.push(rec); closeM('ov-deposit'); persist('Deposit যোগ হয়েছে'); }
 }
 async function delDeposit(id){
-  if(!requireAdmin())return; if(!confirm('ডিলিট করবেন?'))return;
+  if(!requireManager())return; if(!confirm('ডিলিট করবেন?'))return;
   const ok=await dbOp(supa.from('deposits').delete().eq('id',id).eq('mess_id',currentMessId),'ডিলিট করা যায়নি');
   if(ok){ STATE.deposits=STATE.deposits.filter(p=>p.id!==id); persist('ডিলিট হয়েছে'); }
 }
@@ -1472,7 +1544,7 @@ function renderSummary(){
     [ICONS.CHART,money(rate.toFixed(2)),'Meal Rate','c-info'],[ICONS.RECEIPT,money(otherTotal),'Other Expenses (দেখুন Other Expenses পেজে)','c-accent']
   ].map(([ic,v,l,c])=>`<div class="card stat ${c}"><div class="ic">${ic}</div><div class="lab">${l}</div><div class="val">${v}</div></div>`).join('');
   const mgr=managerFor(mon,yr);
-  document.getElementById('sm-manager').innerHTML=`${ICONS.CROWN}<div style="flex:1">এই মাসের Manager: <b>${mgr?escapeHtml(mgr.name):'এখনো ঠিক করা হয়নি'}</b></div>${isAdmin?`<button class="btn sm primary" onclick="openManagerModal()">${mgr?'Change':'Assign'}</button>`:''}`;
+  document.getElementById('sm-manager').innerHTML=`${ICONS.CROWN}<div style="flex:1">এই মাসের Manager: <b>${mgr?escapeHtml(mgr.name):'এখনো ঠিক করা হয়নি'}</b></div>${isSuperAdmin?`<button class="btn sm primary" onclick="openManagerModal()">${mgr?'Change':'Assign'}</button>`:''}`;
   const list=STATE.members.filter(m=>m.status!=='Left'&&m.inMealFund!==false);
   document.getElementById('sm-body').innerHTML=list.map(m=>{
     const s=memberSummary(m.id,mon,yr);
@@ -1482,7 +1554,7 @@ function renderSummary(){
       <td data-label="Deposits (Meal)" class="num" style="color:var(--success)">${money(s.deposits)}</td>
       <td data-label="Balance" class="num" style="font-weight:700;color:${s.balance<0?'var(--danger)':'var(--success)'}">${money(Math.abs(s.balance))}</td>
       <td data-label="Status">${badge(s.status)}</td>
-      <td data-label="">${isAdmin&&s.status==='Due'?`<button class="btn icon ghost sm" onclick="waDueReminder('${m.id}','${mon}',${yr})" title="WhatsApp-এ Due মনে করিয়ে দিন">${ICONS.WHATSAPP}</button>`:''}</td></tr>`;
+      <td data-label="">${isMonthManager&&s.status==='Due'?`<button class="btn icon ghost sm" onclick="waDueReminder('${m.id}','${mon}',${yr})" title="WhatsApp-এ Due মনে করিয়ে দিন">${ICONS.WHATSAPP}</button>`:''}</td></tr>`;
   }).join('')||emptyRow(7,'কোনো member নেই');
 }
 function openManagerModal(){
@@ -1494,7 +1566,7 @@ function openManagerModal(){
   setBusy('save-mgr',false,ICONS.CHECK+'Save');openM('ov-manager');
 }
 async function saveManager(){
-  if(!requireAdmin())return;
+  if(!requireSuperAdmin())return;
   const mid=document.getElementById('mgr-member').value;
   if(!mid){toast('Select Member','er');return;}
   const member=STATE.members.find(m=>m.id===mid);
@@ -1554,7 +1626,7 @@ function isCarryForwardApplied(month,year){
 function checkCarryForwardDue(){
   const banner=document.getElementById('cf-banner');
   if(!banner)return;
-  if(!isAdmin){ banner.innerHTML=''; return; }
+  if(!isMonthManager){ banner.innerHTML=''; return; }
   const {month,year}=prevMonthYear();
   const {bazar,meals}=mealRateFor(month,year);
   const hadActivity=bazar>0||meals>0;
@@ -1564,7 +1636,7 @@ function checkCarryForwardDue(){
     <button class="btn sm primary" onclick="doCarryForward('${month}',${year})">Carry Forward করুন</button></div>`;
 }
 async function doCarryForward(month,year){
-  if(!requireAdmin())return;
+  if(!requireManager())return;
   if(isCarryForwardApplied(month,year)){ toast('এই মাসের carry forward আগেই করা হয়েছে','er'); return; }
   const targetDate=nextMonthFirstDate(month,year);
   const members=STATE.members.filter(m=>m.status!=='Left'&&m.inMealFund!==false);
