@@ -77,10 +77,17 @@ function badge(status){const map={Active:'gn',Inactive:'am',Left:'gy',Settled:'g
 // এডিট করতে পারবেন না (শুধু দেখতে পারবেন)। Members/Settings/Manager
 // assign করা এখনো শুধু Owner-এর (requireSuperAdmin দিয়ে গার্ড করা)।
 function requireManager(){ if(!isMonthManager){ toast('শুধু এই মাসের Manager এটা করতে পারবেন','er'); return false; } return true; }
+// Members ম্যানেজ করা (Add/Edit/Delete) — Owner এবং এই মাসের Manager
+// দুজনেই পারবে, দৈনন্দিন কাজের অংশ হিসেবে।
+function requireMemberAccess(){ if(!isAdmin){ toast('শুধু Owner বা এই মাসের Manager Member ম্যানেজ করতে পারবেন','er'); return false; } return true; }
 // কোন পেজে কার এডিট এক্সেস আছে — Members/Settings শুধু Owner-এর
 // (মেসের গঠন/অ্যাকাউন্ট সংক্রান্ত), বাকি সব দৈনন্দিন ডেটা এন্ট্রি পেজ
 // শুধু এই মাসের Manager-এর।
-function canEditPage(page){ return (page==='members'||page==='settings')?isSuperAdmin:isMonthManager; }
+// কোন পেজে কার এডিট এক্সেস আছে — Settings শুধু Owner-এর (মেসের গঠন/
+// অ্যাকাউন্ট সংক্রান্ত)। Members এখন Owner এবং এই মাসের Manager দুজনেই
+// ম্যানেজ করতে পারবে (দৈনন্দিন কাজের অংশ হিসেবে গণ্য)। বাকি সব
+// দৈনন্দিন ডেটা এন্ট্রি পেজ শুধু এই মাসের Manager-এর।
+function canEditPage(page){ if(page==='settings')return isSuperAdmin; if(page==='members')return isAdmin; return isMonthManager; }
 function requireSuperAdmin(){ if(!isSuperAdmin){ toast('শুধু Owner (Super Admin) এটা করতে পারবেন','er'); return false; } return true; }
 function initials(name){return (name||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase();}
 const AV_COLORS=['#1F6F54','#DD9E33','#2E7B79','#C6553D','#6E5DA6','#3C7DBF','#B4652F','#4E8B3B'];
@@ -143,7 +150,7 @@ function isEligibleForMeal(m,dateISO){
 /* ═══════════════════════════════════════════════════════════
    SUPABASE DATA LAYER
    ═══════════════════════════════════════════════════════════ */
-function emptySettings(){ return {messName:'',theme:'light',ownerMemberId:''}; }
+function emptySettings(){ return {messName:'',theme:'light',ownerMemberId:'',mealCutoff:'00:00'}; }
 let STATE=null;
 
 // Generates a globally-unique-enough id (no longer relies on scanning an
@@ -174,7 +181,7 @@ async function loadState(messId){
   return {
     messId,
     settings: s.data ? {
-      messName:s.data.name||'', theme:s.data.theme||'light', ownerMemberId:s.data.owner_member_id||''
+      messName:s.data.name||'', theme:s.data.theme||'light', ownerMemberId:s.data.owner_member_id||'', mealCutoff:s.data.meal_cutoff||'00:00'
     } : emptySettings(),
     members:(mem.data||[]).map(r=>({id:r.id,name:r.name,phone:r.phone||'',passwordHash:r.password_hash||'',status:r.status,joined:r.joined||'',left:r.left_date||'',inactiveFrom:r.inactive_from||'',inactiveTo:r.inactive_to||'',inMealFund:r.in_meal_fund!==false,inOtherFund:r.in_other_fund!==false,notes:r.notes||''})),
     mealEntries:(meals.data||[]).map(r=>({id:r.id,date:r.date,mid:r.member_id,name:r.member_name,meals:Number(r.meals),guest:Number(r.guest),notes:r.notes||''})),
@@ -184,24 +191,24 @@ async function loadState(messId){
     managers:(mgrs.data||[]).map(r=>({monthYear:r.month_year,mid:r.member_id,name:r.member_name})),
     // প্রতিদিনের ঐচ্ছিক নোট — যেমন "বাজার হয়নি তাই মিল বন্ধ", "রান্নার লোক অনুপস্থিত" ইত্যাদি
     dayNotes:(dn.data||[]).map(r=>({date:r.date,note:r.note||''})),
-    // মেম্বারের আগের রাতে দেওয়া "আগামীকাল কয়টা মিল লাগবে" — Manager
-    // আসল সংখ্যার সাথে মিলিয়ে চূড়ান্ত করে।
-    mealRequests:(mr.data||[]).map(r=>({date:r.date,mid:r.member_id,name:r.member_name,sokal:r.sokal!==false,raat:r.raat!==false})),
+    // মেম্বারের আগের রাতে দেওয়া "আগামীকাল Lunch/Dinner লাগবে কিনা" —
+    // Manager আসল সংখ্যার সাথে মিলিয়ে চূড়ান্ত করে।
+    mealRequests:(mr.data||[]).map(r=>({date:r.date,mid:r.member_id,name:r.member_name,lunch:r.lunch!==false,dinner:r.dinner!==false})),
   };
 }
 function dayNoteFor(dateISO){ const r=(STATE.dayNotes||[]).find(x=>x.date===dateISO); return r?r.note:''; }
 // একটা নির্দিষ্ট মেম্বার একটা নির্দিষ্ট তারিখের জন্য মিল "চেয়েছিল" কিনা —
 // থাকলে সংখ্যা, না থাকলে null (অর্থাৎ "জানায়নি", ০ থেকে আলাদা)।
-// একটা নির্দিষ্ট মেম্বার একটা নির্দিষ্ট তারিখের জন্য কোন মিল (সকাল/রাত)
-// "চেয়েছিল" কিনা — থাকলে {sokal,raat} (true/false), না থাকলে null
+// একটা নির্দিষ্ট মেম্বার একটা নির্দিষ্ট তারিখের জন্য কোন মিল (Lunch/Dinner)
+// "চেয়েছিল" কিনা — থাকলে {lunch,dinner} (true/false), না থাকলে null
 // (অর্থাৎ "জানায়নি")।
-function requestFor(mid,dateISO){ const r=(STATE.mealRequests||[]).find(x=>x.mid===mid&&x.date===dateISO); return r?{sokal:r.sokal!==false,raat:r.raat!==false}:null; }
-// অনুরোধের মোট সংখ্যা (সকাল+রাত মিলিয়ে ০/১/২) — Manager-এর গ্রিডে আসল
+function requestFor(mid,dateISO){ const r=(STATE.mealRequests||[]).find(x=>x.mid===mid&&x.date===dateISO); return r?{lunch:r.lunch!==false,dinner:r.dinner!==false}:null; }
+// অনুরোধের মোট সংখ্যা (Lunch+Dinner মিলিয়ে ০/১/২) — Manager-এর গ্রিডে আসল
 // সংখ্যার সাথে মিলছে কিনা তুলনা করার জন্য।
-function requestTotal(mid,dateISO){ const r=requestFor(mid,dateISO); return r?(r.sokal?1:0)+(r.raat?1:0):null; }
-// অনুরোধ থেকে "সকাল ✓ · রাত ✗" স্টাইলের ব্যাজ বানায় — Manager স্পষ্ট
+function requestTotal(mid,dateISO){ const r=requestFor(mid,dateISO); return r?(r.lunch?1:0)+(r.dinner?1:0):null; }
+// অনুরোধ থেকে "Lunch ✓ · Dinner ✗" স্টাইলের ব্যাজ বানায় — Manager স্পষ্ট
 // দেখতে পারে কোন মিল চলবে, কোনটা বন্ধ থাকবে (বাধ্যতামূলক একটা সংখ্যা না)।
-function reqBadgeHtml(req){ return `<span class="badge bl">সকাল ${req.sokal?'✓':'✗'} · রাত ${req.raat?'✓':'✗'}</span>`; }
+function reqBadgeHtml(req){ return `<span class="badge bl">Lunch ${req.lunch?'✓':'✗'} · Dinner ${req.dinner?'✓':'✗'}</span>`; }
 function tomorrowISO(){ const d=new Date(); d.setDate(d.getDate()+1); return toLocalISODate(d); }
 // Runs a Supabase write and shows a toast on failure. Returns true/false.
 async function dbOp(promise,failMsg){
@@ -768,54 +775,96 @@ function otherFundSummary(mid,month,year){
    DASHBOARD
    ═══════════════════════════════════════════════════════════ */
 /* ═══════════════════════════════════════════════════════════
-   আগামীকালের মিল অনুরোধ (মেম্বার নিজে জানায়) — এটা টার্গেট তারিখ সবসময়
+   আগামীকালের মিল অনুরোধ (মেম্বার নিজে জানায়) — টার্গেট তারিখ সবসময়
    "আজ+১" (tomorrowISO), তাই মধ্যরাত পেরোলেই এই উইজেট এমনিতেই পরের দিনের
-   দিকে সরে যায় — গতকাল "আগামীকাল" ছিল এমন তারিখ আর এই উইজেট দিয়ে
-   বদলানো যায় না, ওটা তখন Manager-এর মিলিয়ে-চূড়ান্ত-করার আওতায় চলে যায়।
-   এভাবে রাত ১২টার কাট-অফ আলাদা কোনো সময়-হিসাব ছাড়াই স্বাভাবিকভাবেই হয়ে
-   যায়। অ্যাপ খোলার সাথে সাথে সবার আগে এটাই চোখে পড়ে — তাই এটা "আজকের
-   মিল এন্ট্রি দিন" reminder-এর কাজও করে, আলাদা push notification ছাড়াই।
+   দিকে সরে যায়। এছাড়া মেসের নির্ধারিত কাট-অফ সময় (Owner/Manager
+   বদলাতে পারে, ডিফল্ট রাত ১২টা) পার হয়ে গেলেও ফর্মটা লক হয়ে যায় —
+   Manager তখন সেই অনুযায়ী মিলিয়ে-চূড়ান্ত করে। অ্যাপ খোলার সাথে সাথে
+   সবার আগে এটাই চোখে পড়ে — তাই এটা "আজকের মিল এন্ট্রি দিন" reminder-এর
+   কাজও করে, আলাদা push notification ছাড়াই।
    ═══════════════════════════════════════════════════════════ */
+// মেসের নির্ধারিত কাট-অফ সময় (ডিফল্ট রাত ১২টা/'00:00') পার হয়ে গেলে
+// true — তখন আর আগামীকালের অনুরোধ জমা/পরিবর্তন করা যাবে না, মধ্যরাতে
+// আবার খুলে যাবে (কারণ তখন "আগামীকাল" নিজেই পরের দিনে সরে যায়)।
+function isPastMealCutoff(){
+  const cutoff=STATE.settings.mealCutoff||'00:00';
+  if(cutoff==='00:00')return false; // মধ্যরাত মানে কখনোই "পার হওয়া" বলে গণ্য হয় না — সবসময় খোলা
+  const [ch,cm]=cutoff.split(':').map(Number);
+  const now=new Date();
+  return (now.getHours()*60+now.getMinutes())>=(ch*60+cm);
+}
+// 'HH:MM' (২৪ঘণ্টা) কে সহজে পড়ার মতো ফরম্যাটে দেখায়, যেমন "9:00 PM"।
+function fmtTimeHM(hhmm){
+  const [h,m]=(hhmm||'00:00').split(':').map(Number);
+  const period=h>=12?'PM':'AM', h12=h%12===0?12:h%12;
+  return h12+':'+String(m).padStart(2,'0')+' '+period;
+}
 function renderMealRequestCard(){
   const card=document.getElementById('meal-request-card'); if(!card)return;
   if(!currentMember||!isEligibleForMeal(currentMember,tomorrowISO())){ card.style.display='none'; return; }
   card.style.display='';
   const tmw=tomorrowISO();
-  document.getElementById('mr-date-lab').textContent='আগামীকাল, '+fmtDate(tmw)+' — রাত ১২টার মধ্যে জানিয়ে দিন, সেই হিসাবে বাজার/রান্না ঠিক হবে।';
+  const cutoff=STATE.settings.mealCutoff||'00:00';
+  const locked=isPastMealCutoff();
+  document.getElementById('mr-date-lab').textContent=locked
+    ? 'আগামীকাল, '+fmtDate(tmw)+' — আজ রাত '+fmtTimeHM(cutoff)+'-এর সময়সীমা পার হয়ে গেছে, আর পরিবর্তন করা যাবে না।'
+    : 'আগামীকাল, '+fmtDate(tmw)+' — আজ '+fmtTimeHM(cutoff)+'-এর মধ্যে জানিয়ে দিন, সেই হিসাবে বাজার/রান্না ঠিক হবে।';
   const existing=requestFor(currentMember.id,tmw);
   // আগে কিছু জানানো না থাকলে ডিফল্ট দুটোই চেক করা থাকে (স্বাভাবিক দিন
   // ধরে নিয়ে) — বন্ধ রাখতে চাইলে মেম্বার নিজেই আনচেক করে দেবে।
-  const sokal=existing?existing.sokal:true, raat=existing?existing.raat:true;
-  document.getElementById('mr-sokal').checked=sokal;
-  document.getElementById('mr-raat').checked=raat;
-  document.getElementById('mr-sokal-label').classList.toggle('active',sokal);
-  document.getElementById('mr-raat-label').classList.toggle('active',raat);
+  const lunch=existing?existing.lunch:true, dinner=existing?existing.dinner:true;
+  document.getElementById('mr-lunch').checked=lunch;
+  document.getElementById('mr-dinner').checked=dinner;
+  document.getElementById('mr-lunch').disabled=locked;
+  document.getElementById('mr-dinner').disabled=locked;
+  document.getElementById('mr-lunch-label').classList.toggle('active',lunch);
+  document.getElementById('mr-dinner-label').classList.toggle('active',dinner);
+  document.getElementById('mr-save-btn').style.display=locked?'none':'';
   const statusEl=document.getElementById('mr-status');
-  if(existing!==null){
+  if(locked){
+    statusEl.className='ibox warn';
+    statusEl.innerHTML=ICONS.ALERT+`<span>সময়সীমা পার হয়ে গেছে — ${existing?'যা জানিয়েছিলেন তাই চূড়ান্ত ধরা হবে':'কিছু জানানো হয়নি, তাই Manager নিজে ঠিক করবেন'}। পরের দিনের জন্য মধ্যরাতের পর আবার জানাতে পারবেন।</span>`;
+  } else if(existing!==null){
     statusEl.className='ibox info';
-    const parts=[]; if(existing.sokal)parts.push('সকাল'); if(existing.raat)parts.push('রাত');
+    const parts=[]; if(existing.lunch)parts.push('Lunch'); if(existing.dinner)parts.push('Dinner');
     const summary=parts.length?parts.join(' + '):'কোনোটাই না (কাল মিল বন্ধ)';
     statusEl.innerHTML=ICONS.CHECK+`<span>আপনি জানিয়েছেন: <b>${summary}</b>। বদলাতে চাইলে চেকবক্স বদলে আবার Save করুন।</span>`;
   } else {
     statusEl.className='ibox warn';
-    statusEl.innerHTML=ICONS.ALERT+'<span>এখনো জানাননি — রাত ১২টার আগে জানিয়ে দিন, নাহলে রান্নার হিসাবে আপনার মিল ধরা হবে না।</span>';
+    statusEl.innerHTML=ICONS.ALERT+`<span>এখনো জানাননি — আজ ${fmtTimeHM(cutoff)}-এর আগে জানিয়ে দিন, নাহলে রান্নার হিসাবে আপনার মিল ধরা হবে না।</span>`;
+  }
+  // কাট-অফ সময় সেট করার নিয়ন্ত্রণ — শুধু Owner/Manager দেখবে ও বদলাতে
+  // পারবে, সাধারণ মেম্বার শুধু উপরের ফর্মটাই দেখবে।
+  const cutoffAdmin=document.getElementById('mr-cutoff-admin');
+  if(cutoffAdmin){
+    cutoffAdmin.style.display=isAdmin?'flex':'none';
+    const cutoffInput=document.getElementById('mr-cutoff-time');
+    if(cutoffInput)cutoffInput.value=cutoff;
   }
 }
 async function saveMealRequest(){
   if(!currentMember)return;
   const tmw=tomorrowISO();
-  const sokal=document.getElementById('mr-sokal').checked;
-  const raat=document.getElementById('mr-raat').checked;
+  const lunch=document.getElementById('mr-lunch').checked;
+  const dinner=document.getElementById('mr-dinner').checked;
   setBusy('mr-save-btn',true);
-  const ok=await dbOp(supa.from('meal_requests').upsert({mess_id:currentMessId,date:tmw,member_id:currentMember.id,member_name:currentMember.name,sokal,raat},{onConflict:'mess_id,date,member_id'}),'জানানো যায়নি');
+  const ok=await dbOp(supa.from('meal_requests').upsert({mess_id:currentMessId,date:tmw,member_id:currentMember.id,member_name:currentMember.name,lunch,dinner},{onConflict:'mess_id,date,member_id'}),'জানানো যায়নি');
   setBusy('mr-save-btn',false,'জানিয়ে দিন');
   if(ok){
     const idx=STATE.mealRequests.findIndex(x=>x.mid===currentMember.id&&x.date===tmw);
-    const rec={date:tmw,mid:currentMember.id,name:currentMember.name,sokal,raat};
+    const rec={date:tmw,mid:currentMember.id,name:currentMember.name,lunch,dinner};
     if(idx>=0)STATE.mealRequests[idx]=rec; else STATE.mealRequests.push(rec);
     toast('জানানো হয়েছে ✅','ok');
     renderMealRequestCard();
   }
+}
+// Owner বা এই মাসের Manager — যেকেউ মিল অনুরোধের কাট-অফ সময় বদলাতে
+// পারবে (এটা মেস-ওয়াইড নিয়ম, তাই Members/Settings-এর মতো Owner-only না)।
+async function saveMealCutoff(){
+  if(!isAdmin){ toast('শুধু Owner বা এই মাসের Manager এটা বদলাতে পারবেন','er'); return; }
+  const val=document.getElementById('mr-cutoff-time').value||'00:00';
+  const ok=await dbOp(supa.from('messes').update({meal_cutoff:val}).eq('id',currentMessId),'Save করা যায়নি');
+  if(ok){ STATE.settings.mealCutoff=val; toast('কাট-অফ সময় সেভ হয়েছে','ok'); renderMealRequestCard(); }
 }
 
 function renderDash(){
@@ -902,7 +951,7 @@ function renderMembers(){
     <td data-label="Notes" style="color:var(--muted)">${escapeHtml(m.notes)}${m.inMealFund===false?' <span class="badge gy" style="font-size:10px">Meal Fund-এ নেই</span>':''}${m.inOtherFund===false?' <span class="badge gy" style="font-size:10px">Other Fund-এ নেই</span>':''}</td>
     <td data-label="Actions"><div style="display:flex;gap:6px;justify-content:flex-end">
       <button class="btn icon ghost sm" onclick="openLedger('${m.id}')" title="Ledger">${ICONS.HISTORY}</button>
-      ${isSuperAdmin?`<button class="btn icon ghost sm" onclick="openMemberModal('${m.id}')" title="Edit">${ICONS.EDIT}</button>
+      ${isAdmin?`<button class="btn icon ghost sm" onclick="openMemberModal('${m.id}')" title="Edit">${ICONS.EDIT}</button>
       <button class="btn icon ghost sm" onclick="delMember('${m.id}')" title="Delete">${ICONS.TRASH}</button>`:''}
     </div></td></tr>`).join('')||emptyRow(6,'কোনো member নেই — Add Member চাপুন');
 }
@@ -944,7 +993,7 @@ function openMemberModal(id){
   setBusy('save-mem',false,ICONS.CHECK+'Save');openM('ov-member');
 }
 async function saveMember(){
-  if(!requireSuperAdmin())return;
+  if(!requireMemberAccess())return;
   const name=document.getElementById('mm-name').value.trim();
   if(!name){toast('নাম দিন','er');return;}
   const phone=document.getElementById('mm-phone').value.trim();
@@ -986,7 +1035,7 @@ async function saveMember(){
   if(ok){ closeM('ov-member'); persist(editMemberId?'Member আপডেট হয়েছে':'Member যোগ হয়েছে'); }
 }
 async function delMember(id){
-  if(!requireSuperAdmin())return;
+  if(!requireMemberAccess())return;
   if(id===STATE.settings.ownerMemberId){ toast('Owner account ডিলিট করা যাবে না','er'); return; }
   if(!confirm('এই member ডিলিট করবেন? তার আগের meal/deposit রেকর্ড থেকে যাবে।'))return;
   const ok=await dbOp(supa.from('members').delete().eq('id',id).eq('mess_id',currentMessId),'Member ডিলিট করা যায়নি');
@@ -1113,7 +1162,7 @@ function loadMealGrid(){
       </label>
       <div class="fld" id="gf-${m.id}" style="${hasGuest?'':'display:none'}"><label>Qty</label><input type="number" step="0.5" min="0" id="mgg-${m.id}" value="${hasGuest?ex.guest:''}" placeholder="1"></div>
       <div class="fg" id="mn-wrap-${m.id}" style="flex-basis:100%;margin:2px 0 0;${initialMismatch?'':'display:none'}">
-        <label style="color:var(--danger)">অনুরোধের (সকাল ${req&&req.sokal?'✓':'✗'} · রাত ${req&&req.raat?'✓':'✗'} = ${reqTotal}) সাথে মিলছে না — কেন ভিন্ন হলো লিখুন *</label>
+        <label style="color:var(--danger)">অনুরোধের (Lunch ${req&&req.lunch?'✓':'✗'} · Dinner ${req&&req.dinner?'✓':'✗'} = ${reqTotal}) সাথে মিলছে না — কেন ভিন্ন হলো লিখুন *</label>
         <input type="text" id="mn-${m.id}" value="${escapeHtml(ex?ex.notes:'')}" placeholder="যেমনঃ ও বাসায় ছিল না তাই মিল বাদ, বা অতিরিক্ত মিল খেয়েছে">
       </div>
     </div>`;

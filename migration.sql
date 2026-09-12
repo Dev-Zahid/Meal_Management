@@ -90,24 +90,38 @@ drop policy if exists "public read/write" on day_notes;
 create policy "public read/write" on day_notes for all using (true) with check (true);
 
 -- ৫.২) নতুন টেবিল: meal_requests — মেম্বার আগের রাতে জানিয়ে রাখে পরের
--- দিন কোন মিল (সকাল/রাত) লাগবে; Manager পরে আসল সংখ্যার সাথে মিলিয়ে
+-- দিন Lunch/Dinner লাগবে কিনা; Manager পরে আসল সংখ্যার সাথে মিলিয়ে
 -- চূড়ান্ত করে (না মিললে meal_entries.notes-এ কারণ লেখা বাধ্যতামূলক)
 create table if not exists meal_requests (
   mess_id text not null,
   date date not null,
   member_id text not null,
   member_name text not null,
-  sokal boolean default true,
-  raat boolean default true,
+  lunch boolean default true,
+  dinner boolean default true,
   primary key (mess_id, date, member_id)
 );
--- আগে এই টেবিল একবার তৈরি হয়ে থাকলে (পুরনো ভার্সনে শুধু 'meals' কলাম
--- ছিল) নতুন কলাম দুটো নিরাপদে যোগ করে দেয় — আগের কোনো ডেটা মুছবে না।
-alter table meal_requests add column if not exists sokal boolean default true;
-alter table meal_requests add column if not exists raat boolean default true;
+-- আগের ভার্সনে কলামের নাম ছিল sokal/raat — থাকলে ডেটাসহ lunch/dinner-এ
+-- rename করে দেয় (কোনো ডেটা মুছবে না)। একদম প্রথম ভার্সনে 'meals' নামে
+-- একটা সংখ্যার কলাম ছিল, সেটা আর ব্যবহার হয় না, এমনি পড়ে থাকলেও ক্ষতি নেই।
+do $$
+begin
+  if exists (select 1 from information_schema.columns where table_name='meal_requests' and column_name='sokal') then
+    alter table meal_requests rename column sokal to lunch;
+  end if;
+  if exists (select 1 from information_schema.columns where table_name='meal_requests' and column_name='raat') then
+    alter table meal_requests rename column raat to dinner;
+  end if;
+end $$;
+alter table meal_requests add column if not exists lunch boolean default true;
+alter table meal_requests add column if not exists dinner boolean default true;
 alter table meal_requests enable row level security;
 drop policy if exists "public read/write" on meal_requests;
 create policy "public read/write" on meal_requests for all using (true) with check (true);
+
+-- ৫.৩) মিল অনুরোধ জমা দেওয়ার শেষ সময় (কাট-অফ) — Owner/Manager
+-- Dashboard থেকে বদলাতে পারবে, ডিফল্ট রাত ১২টা।
+alter table messes add column if not exists meal_cutoff text not null default '00:00';
 
 -- ৬) (ঐচ্ছিক) পুরনো singleton settings টেবিল আর ব্যবহার হবে না, কিন্তু
 --    নিরাপত্তার জন্য এখনই ডিলিট করা হচ্ছে না — চাইলে ম্যানুয়ালি ডিলিট করতে
