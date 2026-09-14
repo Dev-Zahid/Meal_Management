@@ -844,15 +844,33 @@ function otherFundSummary(mid,month,year){
    সবার আগে এটাই চোখে পড়ে — তাই এটা "আজকের মিল এন্ট্রি দিন" reminder-এর
    কাজও করে, আলাদা push notification ছাড়াই।
    ═══════════════════════════════════════════════════════════ */
-// মেসের নির্ধারিত কাট-অফ সময় (ডিফল্ট রাত ১২টা/'00:00') পার হয়ে গেলে
-// true — তখন আর আগামীকালের অনুরোধ জমা/পরিবর্তন করা যাবে না, মধ্যরাতে
-// আবার খুলে যাবে (কারণ তখন "আগামীকাল" নিজেই পরের দিনে সরে যায়)।
-function isPastMealCutoff(){
+// মিল-অনুরোধের "কোন তারিখের জন্য জিজ্ঞেস করা হচ্ছে" আর "লক আছে কিনা" —
+// দুটো একসাথে ঠিক করা হয়, কারণ শুধু "আজ+১" (tomorrowISO) আর কাট-অফকে
+// আলাদাভাবে হিসাব করলে কাট-অফ মধ্যরাতের পরে (যেমন ভোর ৪টা) হলে ভুল হয়ে
+// যায়: মধ্যরাত ১২টা পার হওয়ামাত্রই "আজ" একদিন এগিয়ে যায়, তাই তখন
+// "আগামীকাল"ও তার সাথে সাথে আরেকদিন এগিয়ে যায় — যদিও আসল কাট-অফ (ভোর
+// ৪টা) তখনো পার হয়নি। যেমনঃ Manager যদি "১৫ তারিখের কাট-অফ ভোর ৪টা"
+// (অর্থাৎ ১৫ তারিখ রাত ১২টা থেকে ভোর ৪টার মধ্যে জানাতে হবে) — বোঝাতে
+// চেয়ে কাট-অফ '04:00' বসান, তাহলে রাত ১২টা ০১ মিনিটে সাবমিট করলেও তখন
+// প্রকৃতপক্ষে সেটা এখনো ১৫ তারিখের জন্যই হওয়া উচিত (১৬ তারিখের জন্য না)।
+//
+// সমাধানঃ কাট-অফ সময় দুপুর ১২টার আগে (ভোররাত/সকাল) হলে সেটাকে "গতরাতের
+// সময়সীমার বর্ধিত অংশ" হিসেবে ধরা হয় — মধ্যরাত থেকে কাট-অফ পর্যন্ত সময়টা
+// তখনো "আজ"-এর জন্যই গণ্য হয় (আগামীকালের জন্য না), আর কাট-অফ পার হওয়ার
+// সাথে সাথেই (কোনো "লক" পিরিয়ড ছাড়াই) পরের তারিখ খুলে যায়। কাট-অফ
+// দুপুর ১২টার পরে (বিকাল/রাত) হলে আগের নিয়মই থাকে — সবসময় "আগামীকাল"-এর
+// কথাই জিজ্ঞেস করা হয়, শুধু কাট-অফ থেকে মধ্যরাত পর্যন্ত ফর্মটা লক থাকে।
+function mealRequestTarget(){
   const cutoff=STATE.settings.mealCutoff||'00:00';
-  if(cutoff==='00:00')return false; // মধ্যরাত মানে কখনোই "পার হওয়া" বলে গণ্য হয় না — সবসময় খোলা
+  if(cutoff==='00:00')return{date:tomorrowISO(),locked:false};
   const [ch,cm]=cutoff.split(':').map(Number);
+  const cutoffMin=ch*60+cm;
   const now=new Date();
-  return (now.getHours()*60+now.getMinutes())>=(ch*60+cm);
+  const nowMin=now.getHours()*60+now.getMinutes();
+  if(cutoffMin<12*60){
+    return nowMin<cutoffMin?{date:todayISO(),locked:false}:{date:tomorrowISO(),locked:false};
+  }
+  return{date:tomorrowISO(),locked:nowMin>=cutoffMin};
 }
 // 'HH:MM' (২৪ঘণ্টা) কে সহজে পড়ার মতো ফরম্যাটে দেখায়, যেমন "9:00 PM"।
 function fmtTimeHM(hhmm){
@@ -862,14 +880,15 @@ function fmtTimeHM(hhmm){
 }
 function renderMealRequestCard(){
   const card=document.getElementById('meal-request-card'); if(!card)return;
-  if(!currentMember||!isEligibleForMeal(currentMember,tomorrowISO())){ card.style.display='none'; return; }
+  const target=mealRequestTarget();
+  const tmw=target.date, locked=target.locked;
+  const dayLabel=(tmw===todayISO())?'আজ':'আগামীকাল'; // ভোররাতের কাট-অফের সময় target আজকের তারিখও হতে পারে
+  if(!currentMember||!isEligibleForMeal(currentMember,tmw)){ card.style.display='none'; return; }
   card.style.display='';
-  const tmw=tomorrowISO();
   const cutoff=STATE.settings.mealCutoff||'00:00';
-  const locked=isPastMealCutoff();
   document.getElementById('mr-date-lab').textContent=locked
-    ? 'আগামীকাল, '+fmtDate(tmw)+' — আজ রাত '+fmtTimeHM(cutoff)+'-এর সময়সীমা পার হয়ে গেছে, আর পরিবর্তন করা যাবে না।'
-    : 'আগামীকাল, '+fmtDate(tmw)+' — আজ '+fmtTimeHM(cutoff)+'-এর মধ্যে জানিয়ে দিন, সেই হিসাবে বাজার/রান্না ঠিক হবে।';
+    ? dayLabel+', '+fmtDate(tmw)+' — আজ রাত '+fmtTimeHM(cutoff)+'-এর সময়সীমা পার হয়ে গেছে, আর পরিবর্তন করা যাবে না।'
+    : dayLabel+', '+fmtDate(tmw)+' — '+fmtTimeHM(cutoff)+'-এর মধ্যে জানিয়ে দিন, সেই হিসাবে বাজার/রান্না ঠিক হবে।';
   const existing=requestFor(currentMember.id,tmw);
   // আগে কিছু জানানো না থাকলে ডিফল্ট দুটোই চেক করা থাকে (স্বাভাবিক দিন
   // ধরে নিয়ে) — বন্ধ রাখতে চাইলে মেম্বার নিজেই আনচেক করে দেবে।
@@ -905,7 +924,7 @@ function renderMealRequestCard(){
 }
 async function saveMealRequest(){
   if(!currentMember)return;
-  const tmw=tomorrowISO();
+  const tmw=mealRequestTarget().date;
   const lunch=document.getElementById('mr-lunch').checked;
   const dinner=document.getElementById('mr-dinner').checked;
   setBusy('mr-save-btn',true);
