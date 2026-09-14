@@ -585,19 +585,25 @@ async function showSuperAdminDash(){
   await Promise.all([renderSuperAdminDash(), renderAdminList()]);
 }
 let saMessesCache=[];
+let saMembersCache=[];   // all members, all messes — used by the "Access as Member" picker
+let saManagerMap={};     // mess_id -> this month's manager member_id
 async function renderSuperAdminDash(){
   const body=document.getElementById('sa-mess-body');
   body.innerHTML=`<tr><td colspan="7" class="empty-row">লোড হচ্ছে...</td></tr>`;
-  const [messesR,membersR,mealsR,bazarR]=await Promise.all([
+  const mon=curMon(),yr=curYr();
+  const [messesR,membersR,mealsR,bazarR,managersR]=await Promise.all([
     supa.from('messes').select('*'),
-    supa.from('members').select('id,mess_id,status'),
+    supa.from('members').select('id,mess_id,name,phone,status'),
     supa.from('meal_entries').select('mess_id,date,meals,guest'),
     supa.from('bazar_expenses').select('mess_id,date,amount'),
+    supa.from('managers').select('mess_id,member_id').eq('month_year',mon+'-'+yr),
   ]);
   if(messesR.error){ body.innerHTML=`<tr><td colspan="7" class="empty-row">লোড করা যায়নি: ${escapeHtml(messesR.error.message)}</td></tr>`; return; }
   const messes=messesR.data||[], members=membersR.data||[], meals=mealsR.data||[], bazar=bazarR.data||[];
-  const mon=curMon(),yr=curYr();
   saMessesCache=messes;
+  saMembersCache=members;
+  saManagerMap={};
+  (managersR.data||[]).forEach(r=>{ saManagerMap[r.mess_id]=r.member_id; });
   const rows=messes.map(ms=>{
     const memList=members.filter(m=>m.mess_id===ms.id);
     const activeCount=memList.filter(m=>m.status==='Active').length;
@@ -620,7 +626,8 @@ async function renderSuperAdminDash(){
     <td data-label="এই মাসের বাজার" class="num">${money(r.monthBazar)}</td>
     <td data-label="তৈরি">${r.ms.created_at?fmtDate(r.ms.created_at.slice(0,10)):'—'}</td>
     <td data-label=""><div style="display:flex;gap:6px;justify-content:flex-end">
-      <button class="btn sm" onclick="openMessAsAdmin('${r.ms.id}')">Open</button>
+      <button class="btn sm" onclick="openMessAsAdmin('${r.ms.id}')" title="এই মেসে Owner হিসেবে ঢুকুন">Open</button>
+      <button class="btn sm ghost" onclick="openAsMemberPicker('${r.ms.id}')" title="এই মেসের নির্দিষ্ট একজন Member হিসেবে ঢুকুন">সদস্য হিসেবে</button>
       <button class="btn icon ghost sm" onclick="deleteMess('${r.ms.id}')" title="Delete">${ICONS.TRASH}</button>
     </div></td></tr>`).join('')||emptyRow(7,'কোনো mess তৈরি হয়নি এখনো');
 }
@@ -650,6 +657,54 @@ async function backToSuperAdminDash(){
   document.getElementById('app').style.display='none';
   document.getElementById('sa-dash-screen').style.display='flex';
   await renderSuperAdminDash();
+}
+/* ── Open a mess as one specific member (not always the Owner) ───
+   "Open" (openMessAsAdmin, উপরে) সবসময় Owner-লেভেল ফুল এক্সেস দেয়।
+   এটা আলাদা — Super Admin কোনো মেসের নির্দিষ্ট একজন member বেছে নিয়ে
+   ঠিক তার চোখেই অ্যাপটা দেখতে/চালাতে পারবে (সেই member Owner হলে Owner
+   এক্সেস, এই মাসের Manager হলে Manager এক্সেস, নাহলে শুধু View Only —
+   role নির্ণয় ঠিক doLogin()-এর মতোই, পাসওয়ার্ড ছাড়াই)। এটা মূলত কোনো
+   member কী দেখছে তা যাচাই/সাপোর্ট করার জন্য। */
+let oaMessId=null;
+function openAsMemberPicker(messId){
+  oaMessId=messId;
+  const mems=saMembersCache.filter(m=>m.mess_id===messId).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  const ms=saMessesCache.find(x=>x.id===messId);
+  const mgrId=saManagerMap[messId];
+  document.getElementById('oa-mess-name').textContent=ms?ms.name:messId;
+  document.getElementById('oa-member-select').innerHTML=mems.map(m=>{
+    const role=ms&&ms.owner_member_id===m.id?' — Owner':mgrId===m.id?' — এই মাসের Manager':'';
+    return `<option value="${m.id}">${escapeHtml(m.name||'(নাম নেই)')}${m.phone?' · '+escapeHtml(m.phone):''}${role}</option>`;
+  }).join('')||'<option value="">কোনো member নেই</option>';
+  document.getElementById('oa-err').style.display='none';
+  openM('ov-openas');
+}
+async function confirmOpenAsMember(){
+  const sel=document.getElementById('oa-member-select');
+  const memberId=sel.value;
+  const err=document.getElementById('oa-err');
+  if(!memberId){ err.textContent='কোনো member পাওয়া যায়নি'; err.style.display='block'; return; }
+  const ok=await openMessAsMember(oaMessId,memberId);
+  if(ok)closeM('ov-openas');
+  else { err.textContent='মেসের ডেটা লোড করা যায়নি'; err.style.display='block'; }
+}
+async function openMessAsMember(messId,memberId){
+  currentMessId=messId;
+  STATE=await loadState(messId);
+  if(!STATE)return false;
+  const row=STATE.members.find(m=>m.id===memberId);
+  if(!row)return false;
+  currentMember=row;
+  // role নির্ণয় ঠিক doLogin()/restoreSession()-এর মতোই — সেই member সত্যিকারের
+  // পাসওয়ার্ড দিয়ে লগিন করলে যা যা দেখতো/করতে পারতো, এখানেও ঠিক তাই।
+  isSuperAdmin=(STATE.settings.ownerMemberId===row.id);
+  const mgr=managerFor(curMon(),curYr());
+  isMonthManager=!!(mgr&&mgr.mid===row.id);
+  isAdmin=isSuperAdmin||isMonthManager;
+  applyTheme();
+  document.getElementById('sa-dash-screen').style.display='none';
+  showApp(true);
+  return true;
 }
 async function deleteMess(messId){
   // নাম এখানে JS state (saMessesCache) থেকে লুকআপ করা হয় — সরাসরি HTML

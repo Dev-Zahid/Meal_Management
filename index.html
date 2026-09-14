@@ -515,6 +515,19 @@
   </div>
 </div>
 
+<div class="overlay" id="ov-openas">
+  <div class="modal">
+    <div class="m-head"><h3>নির্দিষ্ট Member হিসেবে ঢুকুন</h3><button class="btn icon ghost" onclick="closeM('ov-openas')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
+    <div class="m-body">
+      <p class="hint" style="margin-bottom:10px">Mess: <b id="oa-mess-name"></b></p>
+      <div class="fg"><label>Member বেছে নিন</label><select id="oa-member-select"></select></div>
+      <p class="hint">যাকে বেছে নেবেন, ঠিক তার অ্যাকাউন্টেই ঢুকবেন — সে Owner/Manager হলে সেই এক্সেস পাবেন, নাহলে শুধু View Only।</p>
+      <div id="oa-err" class="err-box"></div>
+    </div>
+    <div class="m-foot"><button class="btn" onclick="closeM('ov-openas')">বাতিল</button><button class="btn primary" onclick="confirmOpenAsMember()">ঢুকুন</button></div>
+  </div>
+</div>
+
 <div class="overlay" id="ov-manager">
   <div class="modal">
     <div class="m-head"><h3>Assign Monthly Manager</h3><button class="btn icon ghost" onclick="closeM('ov-manager')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
