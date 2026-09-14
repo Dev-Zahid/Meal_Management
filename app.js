@@ -92,7 +92,7 @@ function requireSuperAdmin(){ if(!isSuperAdmin){ toast('শুধু Owner (Supe
 function initials(name){return (name||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase();}
 const AV_COLORS=['#1F6F54','#DD9E33','#2E7B79','#C6553D','#6E5DA6','#3C7DBF','#B4652F','#4E8B3B'];
 function avatarColor(id){let h=0;for(let i=0;i<id.length;i++)h=(h*31+id.charCodeAt(i))>>>0;return AV_COLORS[h%AV_COLORS.length];}
-function avatar(m){return `<div class="avatar" style="background:${avatarColor(m.id)}">${initials(m.name)}</div>`;}
+function avatar(m){return `<div class="avatar" style="background:${avatarColor(m.id)}">${escapeHtml(initials(m.name))}</div>`;}
 function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
 /* ── WhatsApp quick-message (wa.me link) ─────────────────────────
@@ -164,10 +164,17 @@ function genId(prefix){
   return prefix+Date.now().toString(36)+'-'+_idSeq.toString(36)+Math.random().toString(36).slice(2,6);
 }
 
+// NOTE: members is deliberately selected with an explicit column list, NOT
+// select('*') — password_hash is no longer readable by the anon/authenticated
+// key at all (see schema.sql/migration.sql's "PASSWORD SECURITY HARDENING"
+// section), so a select('*') here would fail with a permission error for the
+// whole query. has_password is a generated column that safely tells the UI
+// "a password is set" without ever exposing the hash itself.
+const MEMBER_COLS='id,mess_id,name,phone,status,joined,left_date,inactive_from,inactive_to,in_other_fund,in_meal_fund,notes,has_password';
 async function loadState(messId){
   const [s,mem,meals,bazar,other,dep,mgrs,dn,mr]=await Promise.all([
     supa.from('messes').select('*').eq('id',messId).maybeSingle(),
-    supa.from('members').select('*').eq('mess_id',messId),
+    supa.from('members').select(MEMBER_COLS).eq('mess_id',messId),
     supa.from('meal_entries').select('*').eq('mess_id',messId),
     supa.from('bazar_expenses').select('*').eq('mess_id',messId),
     supa.from('other_expenses').select('*').eq('mess_id',messId),
@@ -183,7 +190,7 @@ async function loadState(messId){
     settings: s.data ? {
       messName:s.data.name||'', theme:s.data.theme||'light', ownerMemberId:s.data.owner_member_id||'', mealCutoff:s.data.meal_cutoff||'00:00'
     } : emptySettings(),
-    members:(mem.data||[]).map(r=>({id:r.id,name:r.name,phone:r.phone||'',passwordHash:r.password_hash||'',status:r.status,joined:r.joined||'',left:r.left_date||'',inactiveFrom:r.inactive_from||'',inactiveTo:r.inactive_to||'',inMealFund:r.in_meal_fund!==false,inOtherFund:r.in_other_fund!==false,notes:r.notes||''})),
+    members:(mem.data||[]).map(r=>({id:r.id,name:r.name,phone:r.phone||'',hasPassword:!!r.has_password,status:r.status,joined:r.joined||'',left:r.left_date||'',inactiveFrom:r.inactive_from||'',inactiveTo:r.inactive_to||'',inMealFund:r.in_meal_fund!==false,inOtherFund:r.in_other_fund!==false,notes:r.notes||''})),
     mealEntries:(meals.data||[]).map(r=>({id:r.id,date:r.date,mid:r.member_id,name:r.member_name,meals:Number(r.meals),guest:Number(r.guest),notes:r.notes||''})),
     bazarExp:(bazar.data||[]).map(r=>({id:r.id,date:r.date,by:r.bought_by||'',amount:Number(r.amount),notes:r.notes||''})),
     otherExp:(other.data||[]).map(r=>({id:r.id,date:r.date,title:r.title,amount:Number(r.amount),notes:r.notes||''})),
@@ -256,7 +263,10 @@ async function restoreSession(){
   const sess=loadSession();
   if(!sess)return false;
   if(sess.type==='platform_admin'){
-    const {data,error}=await supa.from('platform_admins').select('*').eq('phone',sess.phone).maybeSingle();
+    // phone,name only — password_hash is no longer readable via a plain select
+    // (see PASSWORD SECURITY HARDENING in schema.sql/migration.sql); this call
+    // only needs to confirm the admin still exists, not re-check the password.
+    const {data,error}=await supa.from('platform_admins').select('phone,name').eq('phone',sess.phone).maybeSingle();
     if(error||!data){ clearSession(); return false; }
     platformAdmin={phone:data.phone,name:data.name}; isPlatformAdmin=true;
     await showSuperAdminDash();
@@ -308,7 +318,7 @@ async function boot(){
     // show the one-time creation screen automatically instead of the normal
     // login. Once it exists, this never shows again; that account just logs
     // in through the normal phone+password form like everyone else.
-    const {count,error}=await supa.from('platform_admins').select('*',{count:'exact',head:true});
+    const {count,error}=await supa.from('platform_admins').select('phone',{count:'exact',head:true});
     if(error)throw error;
     hideBootLoading();
     if(!count){
@@ -367,7 +377,7 @@ async function doSetup(){
   setBusy('su-btn',false,'খাতা তৈরি করুন');
   if(ownerLinkOk){
     currentMessId=messId;
-    STATE={messId,settings:{messName,theme:'light',ownerMemberId:ownerId},members:[{id:ownerId,name:ownerName,phone:ownerPhone,passwordHash,status:'Active',joined:todayISO(),left:'',inactiveFrom:'',inactiveTo:'',inMealFund:true,inOtherFund:true,notes:''}],mealEntries:[],bazarExp:[],otherExp:[],deposits:[],managers:[],dayNotes:[],mealRequests:[]};
+    STATE={messId,settings:{messName,theme:'light',ownerMemberId:ownerId},members:[{id:ownerId,name:ownerName,phone:ownerPhone,hasPassword:true,status:'Active',joined:todayISO(),left:'',inactiveFrom:'',inactiveTo:'',inMealFund:true,inOtherFund:true,notes:''}],mealEntries:[],bazarExp:[],otherExp:[],deposits:[],managers:[],dayNotes:[],mealRequests:[]};
     document.getElementById('setup-screen').style.display='none';
     currentMember=STATE.members[0]; isSuperAdmin=true; isMonthManager=false; isAdmin=true;
     applyTheme();
@@ -405,35 +415,38 @@ async function doLogin(){
   setBusy('login-btn',true);
   const hash=await hashPassword(pass);
 
-  // 1) Platform Super Admin?
-  const {data:admin,error:adminErr}=await supa.from('platform_admins').select('*').eq('phone',phone).maybeSingle();
+  // 1) Platform Super Admin? — verification happens INSIDE the database now
+  // (verify_platform_admin_login), so the password_hash never has to travel
+  // to the browser to be compared (see PASSWORD SECURITY HARDENING).
+  const {data:adminRows,error:adminErr}=await supa.rpc('verify_platform_admin_login',{p_phone:phone,p_password_hash:hash});
   if(adminErr){ setBusy('login-btn',false,'লগিন করুন'); err.textContent='Database error: '+adminErr.message; err.style.display='block'; return; }
-  if(admin){
+  const adminRow=adminRows&&adminRows[0];
+  if(adminRow){
     setBusy('login-btn',false,'লগিন করুন');
-    if(hash!==admin.password_hash){ err.textContent='ভুল Password, আবার চেষ্টা করুন'; err.style.display='block'; return; }
-    platformAdmin={phone:admin.phone,name:admin.name}; isPlatformAdmin=true;
+    if(adminRow.result!=='ok'){ err.textContent='ভুল Password, আবার চেষ্টা করুন'; err.style.display='block'; return; }
+    platformAdmin={phone:adminRow.phone,name:adminRow.name}; isPlatformAdmin=true;
     document.getElementById('login-screen').style.display='none';
     document.getElementById('login-phone').value='';document.getElementById('login-pass').value='';
-    saveSession({type:'platform_admin',phone:admin.phone});
+    saveSession({type:'platform_admin',phone:adminRow.phone});
     showSuperAdminDash();
     return;
   }
 
-  // 2) Regular mess member
-  const {data:memRows,error:memErr}=await supa.from('members').select('*').eq('phone',phone).limit(1);
+  // 2) Regular mess member — same idea via verify_member_login.
+  const {data:memRows,error:memErr}=await supa.rpc('verify_member_login',{p_phone:phone,p_password_hash:hash});
   setBusy('login-btn',false,'লগিন করুন');
   if(memErr){ err.textContent='Database error: '+memErr.message; err.style.display='block'; return; }
-  if(!memRows||!memRows.length){err.textContent='এই ফোন নম্বর দিয়ে কোনো অ্যাকাউন্ট পাওয়া যায়নি';err.style.display='block';return;}
-  const row=memRows[0];
-  if(!row.password_hash){err.textContent='আপনার Password এখনো সেট করা হয়নি — Manager/Owner-এর সাথে যোগাযোগ করুন';err.style.display='block';return;}
-  if(hash!==row.password_hash){err.textContent='ভুল Password, আবার চেষ্টা করুন';err.style.display='block';return;}
-  currentMessId=row.mess_id;
+  const memRow=memRows&&memRows[0];
+  if(!memRow){err.textContent='এই ফোন নম্বর দিয়ে কোনো অ্যাকাউন্ট পাওয়া যায়নি';err.style.display='block';return;}
+  if(memRow.result==='no_password'){err.textContent='আপনার Password এখনো সেট করা হয়নি — Manager/Owner-এর সাথে যোগাযোগ করুন';err.style.display='block';return;}
+  if(memRow.result==='wrong_password'){err.textContent='ভুল Password, আবার চেষ্টা করুন';err.style.display='block';return;}
+  currentMessId=memRow.mess_id;
   STATE=await loadState(currentMessId);
   if(!STATE){ err.textContent='Database থেকে মেসের ডেটা লোড করা যায়নি'; err.style.display='block'; return; }
-  currentMember=STATE.members.find(m=>m.id===row.id);
-  isSuperAdmin=(STATE.settings.ownerMemberId===row.id);
+  currentMember=STATE.members.find(m=>m.id===memRow.id);
+  isSuperAdmin=(STATE.settings.ownerMemberId===memRow.id);
   const mgr=managerFor(curMon(),curYr());
-  isMonthManager=!!(mgr&&mgr.mid===row.id);
+  isMonthManager=!!(mgr&&mgr.mid===memRow.id);
   isAdmin=isSuperAdmin||isMonthManager;
   isPlatformAdmin=false; platformAdmin=null;
   applyTheme();
@@ -453,7 +466,7 @@ function doLogout(){ clearSession(); location.reload(); }
    platform_admins table is still empty.
    ═══════════════════════════════════════════════════════════ */
 async function createFirstPlatformAdmin(){
-  const {count}=await supa.from('platform_admins').select('*',{count:'exact',head:true});
+  const {count}=await supa.from('platform_admins').select('phone',{count:'exact',head:true});
   const err=document.getElementById('sa-err'); err.style.display='none';
   if(count>0){ err.textContent='ইতিমধ্যে একজন Super Admin আছে — লগিন স্ক্রিনে ফিরে গিয়ে লগিন করুন'; err.style.display='block'; return; }
   const name=document.getElementById('sa-name').value.trim()||'Super Admin';
@@ -476,39 +489,65 @@ function saLogout(){ clearSession(); location.reload(); }
    নতুন যোগ/পুরনো বাদ দেওয়ার অপশন — শেষ অ্যাকাউন্টটা ডিলিট করা যাবে না,
    যাতে ভুলবশত পুরো প্ল্যাটফর্ম লক-আউট না হয়ে যায়।
    ═══════════════════════════════════════════════════════════ */
+let saAdminCount=0; // used only for a quick client-side hint; the real "can't delete the last admin" rule is enforced inside remove_platform_admin() itself
 async function renderAdminList(){
   const body=document.getElementById('sa-admin-body'); if(!body)return;
   const {data,error}=await supa.from('platform_admins').select('phone,name').order('phone');
   if(error){ body.innerHTML=emptyRow(3,'লোড করা যায়নি: '+escapeHtml(error.message)); return; }
   const admins=data||[];
+  saAdminCount=admins.length;
+  // phone is passed via a data-* attribute (not interpolated into the onclick
+  // JS string) so a phone number containing a quote can never break out of
+  // the handler and run arbitrary script — see removeAdmin() below.
   body.innerHTML=admins.map(a=>`<tr>
     <td data-label="Name" style="font-weight:600">${escapeHtml(a.name)}</td>
     <td data-label="Phone">${escapeHtml(a.phone)}</td>
-    <td data-label=""><button class="btn icon ghost sm" onclick="removeAdmin('${escapeHtml(a.phone)}',${admins.length})" title="Remove">${ICONS.TRASH}</button></td></tr>`).join('')||emptyRow(3,'কোনো admin নেই');
+    <td data-label=""><button class="btn icon ghost sm" data-phone="${escapeHtml(a.phone)}" onclick="removeAdmin(this.dataset.phone)" title="Remove">${ICONS.TRASH}</button></td></tr>`).join('')||emptyRow(3,'কোনো admin নেই');
 }
 function openAddAdminModal(){
-  document.getElementById('aa-name').value='';document.getElementById('aa-phone').value='';document.getElementById('aa-pass').value='';
+  document.getElementById('aa-name').value='';document.getElementById('aa-phone').value='';document.getElementById('aa-pass').value='';document.getElementById('aa-my-pass').value='';
   document.getElementById('aa-err').style.display='none';
   setBusy('save-aa',false,'যোগ করুন');openM('ov-addadmin');
 }
+// একজন বিদ্যমান Super Admin ছাড়া কেউ নতুন Super Admin অ্যাকাউন্ট বানাতে
+// পারবে না, তাই এখানে নিজের বর্তমান Password দিয়ে নিশ্চিত করতে হয় —
+// add_platform_admin() ডেটাবেজের ভেতরেই এই acting admin-এর Password
+// যাচাই করে তবে নতুন admin যোগ করে (দেখুন schema.sql-এর নিরাপত্তা অংশ)।
 async function saveNewAdmin(){
   const err=document.getElementById('aa-err'); err.style.display='none';
   const name=document.getElementById('aa-name').value.trim()||'Super Admin';
   const phone=document.getElementById('aa-phone').value.trim();
   const pass=document.getElementById('aa-pass').value;
+  const myPass=document.getElementById('aa-my-pass').value;
   if(!phone){err.textContent='ফোন নম্বর দিন';err.style.display='block';return;}
   if(!pass||pass.length<4){err.textContent='কমপক্ষে ৪ ক্যারেক্টারের Password দিন';err.style.display='block';return;}
+  if(!myPass){err.textContent='নিশ্চিত করতে আপনার নিজের বর্তমান Password দিন';err.style.display='block';return;}
   setBusy('save-aa',true);
   const passwordHash=await hashPassword(pass);
-  const ok=await dbOp(supa.from('platform_admins').insert({phone,name,password_hash:passwordHash}),'Admin যোগ করা যায়নি — এই ফোন নম্বর দিয়ে হয়তো আগে থেকেই একজন Super Admin আছে');
+  const myHash=await hashPassword(myPass);
+  const {data,error}=await supa.rpc('add_platform_admin',{p_new_phone:phone,p_new_name:name,p_new_password_hash:passwordHash,p_acting_phone:platformAdmin.phone,p_acting_password_hash:myHash});
   setBusy('save-aa',false,'যোগ করুন');
-  if(ok){ closeM('ov-addadmin'); toast('নতুন Super Admin যোগ হয়েছে','ok'); await renderAdminList(); }
+  if(error){ err.textContent='Database error: '+error.message; err.style.display='block'; return; }
+  if(data==='not_authorized'){ err.textContent='আপনার নিজের Password ভুল'; err.style.display='block'; return; }
+  if(data==='phone_taken'){ err.textContent='এই ফোন নম্বর দিয়ে আগে থেকেই একজন Super Admin আছে'; err.style.display='block'; return; }
+  if(data!=='ok'){ err.textContent='Admin যোগ করা যায়নি'; err.style.display='block'; return; }
+  closeM('ov-addadmin'); toast('নতুন Super Admin যোগ হয়েছে','ok'); await renderAdminList();
 }
-async function removeAdmin(phone,totalCount){
-  if(totalCount<=1){ toast('শেষ Super Admin অ্যাকাউন্ট ডিলিট করা যাবে না — প্ল্যাটফর্মে ঢোকার আর কোনো উপায় থাকবে না','er'); return; }
+// অন্য Super Admin ডিলিট করতে হলেও নিজের Password দিয়ে নিশ্চিত করতে হয় —
+// শেষ অ্যাকাউন্টটা ডিলিট করা যাবে না, এই নিয়মও এখন ডেটাবেজের ভেতরেই
+// (remove_platform_admin) enforce হয়, শুধু ব্রাউজারে না।
+async function removeAdmin(phone){
+  if(saAdminCount<=1){ toast('শেষ Super Admin অ্যাকাউন্ট ডিলিট করা যাবে না — প্ল্যাটফর্মে ঢোকার আর কোনো উপায় থাকবে না','er'); return; }
   if(!confirm('এই Super Admin অ্যাকাউন্ট ডিলিট করবেন?'))return;
-  const ok=await dbOp(supa.from('platform_admins').delete().eq('phone',phone),'ডিলিট করা যায়নি');
-  if(ok){ toast('ডিলিট হয়েছে','ok'); await renderAdminList(); }
+  const myPass=prompt('নিশ্চিত করতে আপনার নিজের বর্তমান Password লিখুন:');
+  if(!myPass)return;
+  const myHash=await hashPassword(myPass);
+  const {data,error}=await supa.rpc('remove_platform_admin',{p_target_phone:phone,p_acting_phone:platformAdmin.phone,p_acting_password_hash:myHash});
+  if(error){ toast('Database error: '+error.message,'er'); return; }
+  if(data==='not_authorized'){ toast('আপনার Password ভুল','er'); return; }
+  if(data==='last_admin'){ toast('শেষ Super Admin অ্যাকাউন্ট ডিলিট করা যাবে না','er'); return; }
+  if(data!=='ok'){ toast('ডিলিট করা যায়নি','er'); return; }
+  toast('ডিলিট হয়েছে','ok'); await renderAdminList();
 }
 /* ── Change my own password ───────────────────────────────── */
 function openChangePasswordModal(){
@@ -522,23 +561,23 @@ async function saveChangePassword(){
   const newPass=document.getElementById('cp-new').value;
   const confirmPass=document.getElementById('cp-confirm').value;
   if(!currentMember||!currentMember.id){ err.textContent='আপনি সরাসরি একজন member হিসেবে লগিন করেননি'; err.style.display='block'; return; }
-  if(currentMember.passwordHash){
-    if(!oldPass){ err.textContent='বর্তমান Password দিন'; err.style.display='block'; return; }
-    const oldHash=await hashPassword(oldPass);
-    if(oldHash!==currentMember.passwordHash){ err.textContent='বর্তমান Password ভুল'; err.style.display='block'; return; }
-  }
+  if(currentMember.hasPassword&&!oldPass){ err.textContent='বর্তমান Password দিন'; err.style.display='block'; return; }
   if(!newPass||newPass.length<4){ err.textContent='নতুন Password কমপক্ষে ৪ ক্যারেক্টারের হতে হবে'; err.style.display='block'; return; }
   if(newPass!==confirmPass){ err.textContent='নতুন Password দুইবার একই দিন'; err.style.display='block'; return; }
   setBusy('cp-btn',true);
+  // পুরনো Password সঠিক কিনা সেটা এখন ডেটাবেজের ভেতরেই (change_own_password)
+  // যাচাই হয় — password_hash আর কখনো ব্রাউজারে আনা হয় না।
+  const oldHash=oldPass?await hashPassword(oldPass):'';
   const newHash=await hashPassword(newPass);
-  const ok=await dbOp(supa.from('members').update({password_hash:newHash}).eq('id',currentMember.id).eq('mess_id',currentMessId),'Password পরিবর্তন করা যায়নি');
+  const {data,error}=await supa.rpc('change_own_password',{p_member_id:currentMember.id,p_mess_id:currentMessId,p_old_hash:oldHash,p_new_hash:newHash});
   setBusy('cp-btn',false,'Password পরিবর্তন করুন');
-  if(ok){
-    currentMember.passwordHash=newHash;
-    const m=STATE.members.find(x=>x.id===currentMember.id); if(m)m.passwordHash=newHash;
-    closeM('ov-changepass');
-    toast('Password পরিবর্তন হয়েছে','ok');
-  }
+  if(error){ err.textContent='Database error: '+error.message; err.style.display='block'; return; }
+  if(data==='wrong_old_password'){ err.textContent='বর্তমান Password ভুল'; err.style.display='block'; return; }
+  if(data!=='ok'){ err.textContent='Password পরিবর্তন করা যায়নি'; err.style.display='block'; return; }
+  currentMember.hasPassword=true;
+  const m=STATE.members.find(x=>x.id===currentMember.id); if(m)m.hasPassword=true;
+  closeM('ov-changepass');
+  toast('Password পরিবর্তন হয়েছে','ok');
 }
 async function showSuperAdminDash(){
   document.getElementById('sa-whoami').textContent=platformAdmin.name+' (Super Admin)';
@@ -582,7 +621,7 @@ async function renderSuperAdminDash(){
     <td data-label="তৈরি">${r.ms.created_at?fmtDate(r.ms.created_at.slice(0,10)):'—'}</td>
     <td data-label=""><div style="display:flex;gap:6px;justify-content:flex-end">
       <button class="btn sm" onclick="openMessAsAdmin('${r.ms.id}')">Open</button>
-      <button class="btn icon ghost sm" onclick="deleteMess('${r.ms.id}','${escapeHtml(r.ms.name)}')" title="Delete">${ICONS.TRASH}</button>
+      <button class="btn icon ghost sm" onclick="deleteMess('${r.ms.id}')" title="Delete">${ICONS.TRASH}</button>
     </div></td></tr>`).join('')||emptyRow(7,'কোনো mess তৈরি হয়নি এখনো');
 }
 function saMessSearch(v){
@@ -612,7 +651,17 @@ async function backToSuperAdminDash(){
   document.getElementById('sa-dash-screen').style.display='flex';
   await renderSuperAdminDash();
 }
-async function deleteMess(messId,name){
+async function deleteMess(messId){
+  // নাম এখানে JS state (saMessesCache) থেকে লুকআপ করা হয় — সরাসরি HTML
+  // onclick attribute-এ escapeHtml(name) বসালে সেটা নিরাপদ মনে হলেও আসলে
+  // নিরাপদ না: ব্রাউজার প্রথমে attribute-টা HTML-ডিকোড করে, তারপর সেটাকেই
+  // inline JS হিসেবে চালায় — তাই মেসের নামে সিঙ্গেল-কোট থাকলে (যেমন কেউ
+  // ইচ্ছাকৃতভাবে "নতুন মেস তৈরি করুন" ফর্মে দিয়ে) সেই কোট ডিকোড হয়ে আসল
+  // onclick জাভাস্ক্রিপ্ট কোড ভেঙে যেকোনো স্ক্রিপ্ট চালাতে পারত (stored
+  // XSS) — Super Admin Dashboard খোলা মাত্র চলে যেত। নাম এখানে state থেকে
+  // আনা মানে HTML attribute-এ কখনো ইউজারের লেখা টেক্সট বসছেই না।
+  const ms=saMessesCache.find(x=>x.id===messId);
+  const name=ms?ms.name:messId;
   if(!confirm(`"${name}" মেসটা পুরোপুরি ডিলিট করবেন? এর সব member/meal/bazar/deposit ইতিহাস চিরতরে মুছে যাবে — এটা আর ফেরত আনা যাবে না।`))return;
   const tables=['meal_entries','bazar_expenses','other_expenses','deposits','managers','day_notes','meal_requests','members'];
   for(const t of tables){
@@ -739,10 +788,17 @@ function mealRateFor(month,year){
   const meals=STATE.mealEntries.filter(e=>inMonth(e.date,month,year)).reduce((a,e)=>a+N(e.meals)+N(e.guest),0);
   return {bazar,meals,rate:meals>0?bazar/meals:0};
 }
-// Empty month = "সব" (All time) — used by the Other Expenses page filter.
+// Empty month/year = "সব" (All time) — used by the Other Expenses page
+// filter. মাস ও বছর একে অপরের থেকে স্বাধীনভাবে ফিল্টার করা যায় (যেমনঃ
+// শুধু বছর বেছে, মাস "সব" রেখে) — renderBazar()/renderOther()-এর মূল
+// লিস্টগুলো যেভাবে ফিল্টার করে ঠিক সেই একই নিয়মে, যাতে "শুধু বছর" বাছলে
+// এই যোগফলটাও সেই বছরেই সীমাবদ্ধ থাকে, ভুলবশত সব-সময়ের টোটাল না দেখায়।
 function otherExpenseFor(month,year){
-  if(!month) return STATE.otherExp.reduce((a,e)=>a+N(e.amount),0);
-  return STATE.otherExp.filter(e=>inMonth(e.date,month,year)).reduce((a,e)=>a+N(e.amount),0);
+  return STATE.otherExp.filter(e=>{
+    if(month&&!inMonth(e.date,month,year))return false;
+    if(!month&&year&&new Date(e.date+'T00:00:00').getFullYear()!==year)return false;
+    return true;
+  }).reduce((a,e)=>a+N(e.amount),0);
 }
 function memberMealCount(mid,month,year){
   return STATE.mealEntries.filter(e=>e.mid===mid&&inMonth(e.date,month,year)).reduce((a,e)=>({m:a.m+N(e.meals),g:a.g+N(e.guest)}),{m:0,g:0});
@@ -765,7 +821,12 @@ function otherFundMembers(){ return STATE.members.filter(m=>m.status!=='Left'&&m
 function otherFundSummary(mid,month,year){
   const participantCount=otherFundMembers().length||1;
   const otherShare=Math.round(otherExpenseFor(month,year)/participantCount);
-  const dep=STATE.deposits.filter(p=>p.mid===mid&&p.type==='Other'&&(!month||inMonth(p.date,month,year))).reduce((a,p)=>a+N(p.amount),0);
+  const dep=STATE.deposits.filter(p=>{
+    if(p.mid!==mid||p.type!=='Other')return false;
+    if(month&&!inMonth(p.date,month,year))return false;
+    if(!month&&year&&new Date(p.date+'T00:00:00').getFullYear()!==year)return false;
+    return true;
+  }).reduce((a,p)=>a+N(p.amount),0);
   const bal=dep-otherShare;
   const status=bal<0?'Due':bal>0?'Advance':'Settled';
   return {otherShare,deposits:dep,balance:bal,status};
@@ -978,7 +1039,7 @@ function openMemberModal(id){
     document.getElementById('mm-meal-fund').checked=m.inMealFund!==false;
     document.getElementById('mm-other-fund').checked=m.inOtherFund!==false;
     document.getElementById('mm-notes').value=m.notes;
-    document.getElementById('mm-pass-hint').textContent=m.passwordHash?'পাসওয়ার্ড আগে থেকেই সেট আছে — বদলাতে চাইলে নতুনটা লিখুন, নাহলে খালি রাখুন।':'এখনো কোনো পাসওয়ার্ড সেট করা হয়নি, তাই সে এখনো লগিন করতে পারবে না।';
+    document.getElementById('mm-pass-hint').textContent=m.hasPassword?'পাসওয়ার্ড আগে থেকেই সেট আছে — বদলাতে চাইলে নতুনটা লিখুন, নাহলে খালি রাখুন।':'এখনো কোনো পাসওয়ার্ড সেট করা হয়নি, তাই সে এখনো লগিন করতে পারবে না।';
   } else {
     document.getElementById('mm-name').value='';document.getElementById('mm-phone').value='';
     document.getElementById('mm-status').value='Active';document.getElementById('mm-joined').value=todayISO();
@@ -990,7 +1051,17 @@ function openMemberModal(id){
     document.getElementById('mm-notes').value='';
     document.getElementById('mm-pass-hint').textContent='খালি রাখলে সে এখনো লগিন করতে পারবে না, পরে বসিয়ে দিতে পারবেন।';
   }
+  const confirmEl=document.getElementById('mm-admin-confirm-pass'); if(confirmEl)confirmEl.value='';
+  toggleAdminConfirmField();
   setBusy('save-mem',false,ICONS.CHECK+'Save');openM('ov-member');
+}
+// অন্য কারো Password সেট/রিসেট করার সময়ই (edit mode + নতুন Password
+// ফিল্ডে কিছু লেখা থাকলে) "আপনার নিজের Password" ফিল্ডটা দেখায় — এটা
+// admin_set_member_password() যাচাই করার জন্য লাগবে (দেখুন saveMember())।
+function toggleAdminConfirmField(){
+  const wrap=document.getElementById('mm-admin-confirm-wrap'); if(!wrap)return;
+  const passEl=document.getElementById('mm-password');
+  wrap.style.display=(editMemberId&&passEl&&passEl.value)?'':'none';
 }
 async function saveMember(){
   if(!requireMemberAccess())return;
@@ -1018,18 +1089,38 @@ async function saveMember(){
     const joined=document.getElementById('mm-joined').value;
     const notes=document.getElementById('mm-notes').value.trim();
     const patch={name,phone,status:newStatus,joined:joined||null,left_date:leftDate||null,inactive_from:inactiveFrom||null,inactive_to:inactiveTo||null,in_meal_fund:inMealFund,in_other_fund:inOtherFund,notes};
-    let newHash=m.passwordHash;
-    if(passRaw){ newHash=await hashPassword(passRaw); patch.password_hash=newHash; }
+    // password_hash ইচ্ছাকৃতভাবে patch-এ নেই — সেই কলামে সরাসরি UPDATE
+    // আর অনুমোদিত না (দেখুন schema.sql-এর নিরাপত্তা অংশ)। Password বদলাতে
+    // চাইলে নিচে আলাদাভাবে admin_set_member_password() RPC কল হয়, যেটা
+    // acting admin-এর (Owner/এই মাসের Manager) নিজের Password যাচাই করে।
     ok=await dbOp(supa.from('members').update(patch).eq('id',editMemberId).eq('mess_id',currentMessId),'Member আপডেট করা যায়নি');
-    if(ok){ m.name=name;m.phone=phone;m.status=newStatus;m.joined=joined;m.left=leftDate;m.inactiveFrom=inactiveFrom;m.inactiveTo=inactiveTo;m.inMealFund=inMealFund;m.inOtherFund=inOtherFund;m.notes=notes;m.passwordHash=newHash; }
+    if(ok){
+      m.name=name;m.phone=phone;m.status=newStatus;m.joined=joined;m.left=leftDate;m.inactiveFrom=inactiveFrom;m.inactiveTo=inactiveTo;m.inMealFund=inMealFund;m.inOtherFund=inOtherFund;m.notes=notes;
+      if(passRaw){
+        const confirmPass=document.getElementById('mm-admin-confirm-pass').value;
+        if(!confirmPass){ toast('Password বদলাতে হলে আপনার নিজের বর্তমান Password দিন','er'); ok=false; }
+        else{
+          const newHash=await hashPassword(passRaw);
+          const confirmHash=await hashPassword(confirmPass);
+          const {data,error}=await supa.rpc('admin_set_member_password',{p_target_member_id:editMemberId,p_mess_id:currentMessId,p_new_hash:newHash,p_acting_member_id:currentMember.id,p_acting_password_hash:confirmHash,p_month_year:curMon()+'-'+curYr()});
+          if(error){ toast('Database error: '+error.message,'er'); ok=false; }
+          else if(data==='not_authorized'){ toast('আপনার নিজের Password ভুল','er'); ok=false; }
+          else if(data!=='ok'){ toast('Password পরিবর্তন করা যায়নি','er'); ok=false; }
+          else{ m.hasPassword=true; }
+        }
+      }
+    }
   } else {
     const id=genId('MB-');
     const status=document.getElementById('mm-status').value;
     const joined=document.getElementById('mm-joined').value;
     const notes=document.getElementById('mm-notes').value.trim();
+    // এখানে সরাসরি INSERT-এ password_hash সেট করা এখনো ঠিক আছে — নতুন
+    // member তৈরির সময় প্রথম Password বসানো একটা ভিন্ন (কম ঝুঁকিপূর্ণ)
+    // অপারেশন, বিদ্যমান কারো hash ওভাররাইট করা না।
     const passwordHash=passRaw?await hashPassword(passRaw):'';
     ok=await dbOp(supa.from('members').insert({id,mess_id:currentMessId,name,phone,password_hash:passwordHash,status,joined:joined||null,inactive_from:inactiveFrom||null,inactive_to:inactiveTo||null,in_meal_fund:inMealFund,in_other_fund:inOtherFund,notes}),'Member যোগ করা যায়নি — হতে পারে এই ফোন নম্বর দিয়ে আগে থেকেই কোথাও একজন member আছে');
-    if(ok)STATE.members.push({id,name,phone,passwordHash,status,joined,left:'',inactiveFrom,inactiveTo,inMealFund,inOtherFund,notes});
+    if(ok)STATE.members.push({id,name,phone,hasPassword:!!passwordHash,status,joined,left:'',inactiveFrom,inactiveTo,inMealFund,inOtherFund,notes});
   }
   setBusy('save-mem',false,ICONS.CHECK+'Save');
   if(ok){ closeM('ov-member'); persist(editMemberId?'Member আপডেট হয়েছে':'Member যোগ হয়েছে'); }
@@ -1077,7 +1168,11 @@ function renderLedgerLists(){
   const mon=monEl?monEl.value:'', yr=yrEl?N(yrEl.value):0;
   const filtered=!!(mon||yr);
   let meals=[...STATE.mealEntries].filter(e=>e.mid===id);
-  let deps=[...STATE.deposits].filter(p=>p.mid===id);
+  // শুধু Meal Fund-এর deposit — এই সাইড-শিটের বাকি অংশ (উপরের stat card,
+  // শিরোনাম ইত্যাদি) সব Meal Fund-কেন্দ্রিক, তাই এখানে Other Fund-এর
+  // deposit মিশিয়ে দিলে টোটাল ও লিস্ট দুটোই ভুল/বিভ্রান্তিকর হয়ে যেত।
+  // Other Fund-এর নিজস্ব হিসাব "Other Expenses" পেজে আলাদাভাবে আছে।
+  let deps=[...STATE.deposits].filter(p=>p.mid===id&&(p.type||'Meal')==='Meal');
   if(mon){
     meals=meals.filter(e=>{const d=new Date(e.date+'T00:00:00');return MONTHS[d.getMonth()]===mon;});
     deps=deps.filter(p=>{const d=new Date(p.date+'T00:00:00');return MONTHS[d.getMonth()]===mon;});
@@ -1096,7 +1191,7 @@ function renderLedgerLists(){
   document.getElementById('led-meals').innerHTML=mealsShown.map(e=>`<div class="led-row"><span>${fmtDate(e.date)}</span><b class="num">${(N(e.meals)+N(e.guest)).toFixed(1).replace(/\.0$/,'')} meal</b></div>`).join('')||'<p class="hint">কোনো এন্ট্রি নেই</p>';
   const depTotal=deps.reduce((a,p)=>a+N(p.amount),0);
   document.getElementById('led-deposit-total').textContent=filtered?`${periodLabel}-এ মোট Deposit: ${money(depTotal)} (${deps.length}টা এন্ট্রি)`:'';
-  document.getElementById('led-deposits').innerHTML=depsShown.map(p=>`<div class="led-row"><span>${fmtDate(p.date)} · ${p.method}</span><b class="num" style="color:var(--success)">${money(p.amount)}</b></div>`).join('')||'<p class="hint">কোনো deposit নেই</p>';
+  document.getElementById('led-deposits').innerHTML=depsShown.map(p=>`<div class="led-row"><span>${fmtDate(p.date)} · ${escapeHtml(p.method)}</span><b class="num" style="color:var(--success)">${money(p.amount)}</b></div>`).join('')||'<p class="hint">কোনো deposit নেই</p>';
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1374,10 +1469,17 @@ function removeBazarItem(i){ bazarItems.splice(i,1); renderBazarItems(); }
 //   তেল - ৩৫০ টাকা
 // Lines that don't end with a recognizable number are skipped and reported,
 // so the manager can add those by hand.
+// বাংলা সংখ্যা (০-৯) কে ইংরেজি (0-9) সংখ্যায় বদলে দেয় — regex-এর \d শুধু
+// ইংরেজি অঙ্ক চেনে, তাই কেউ বাংলা অঙ্কে দাম লিখে পেস্ট করলে (যেমনঃ "চাল
+// ১২০") আগে পুরো লাইনটাই "বোঝা যায়নি" বলে স্কিপ হয়ে যেত।
+function bnDigitsToEn(s){
+  const bn='০১২৩৪৫৬৭৮৯';
+  return s.replace(/[০-৯]/g,d=>String(bn.indexOf(d)));
+}
 function parseBazarPasteList(){
   const box=document.getElementById('bz-paste'); if(!box)return;
   const text=box.value;
-  const lines=text.split('\n').map(l=>l.trim()).filter(Boolean);
+  const lines=text.split('\n').map(l=>bnDigitsToEn(l.trim())).filter(Boolean);
   if(!lines.length){toast('আগে লিস্ট পেস্ট করুন','er');return;}
   let added=0, skipped=[];
   lines.forEach(line=>{
@@ -1530,7 +1632,7 @@ function renderDeposits(){
   document.getElementById('dep-body').innerHTML=[...list].sort((a,b)=>b.date.localeCompare(a.date)).map(p=>`<tr>
     <td data-label="Date">${fmtDate(p.date)}</td><td data-label="Member" style="font-weight:600">${escapeHtml(p.name)}</td>
     <td data-label="Amount" class="num" style="color:var(--success);font-weight:700">${money(p.amount)}</td>
-    <td data-label="Method">${p.method}</td><td data-label="Notes" style="color:var(--muted)">${escapeHtml(p.notes)}</td>
+    <td data-label="Method">${escapeHtml(p.method)}</td><td data-label="Notes" style="color:var(--muted)">${escapeHtml(p.notes)}</td>
     <td data-label="" style="white-space:nowrap">${isMonthManager?`<button class="btn icon ghost sm" onclick="waDepositMsg('${p.id}')" title="WhatsApp-এ জানিয়ে দিন">${ICONS.WHATSAPP}</button>
       <button class="btn icon ghost sm" onclick="delDeposit('${p.id}')">${ICONS.TRASH}</button>`:''}</td></tr>`).join('')||emptyRow(6,'কোনো deposit নেই');
 

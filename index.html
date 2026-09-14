@@ -419,7 +419,12 @@
         </label>
         <p class="hint" style="margin-top:4px">দুটো ফান্ড সম্পূর্ণ স্বাধীন — চাইলে দুটোই, একটা, বা কোনোটাই বেছে নিতে পারেন।</p>
       </div>
-      <div class="fg"><label id="mm-pass-label">Login Password</label><input type="password" id="mm-password" placeholder="Password দিন যাতে সে লগিন করতে পারে"><p class="hint" id="mm-pass-hint" style="margin-top:4px"></p></div>
+      <div class="fg"><label id="mm-pass-label">Login Password</label><input type="password" id="mm-password" oninput="toggleAdminConfirmField()" placeholder="Password দিন যাতে সে লগিন করতে পারে"><p class="hint" id="mm-pass-hint" style="margin-top:4px"></p></div>
+      <div class="fg" id="mm-admin-confirm-wrap" style="display:none">
+        <label>আপনার নিজের Password (নিশ্চিত করতে) *</label>
+        <input type="password" id="mm-admin-confirm-pass" placeholder="আপনার বর্তমান লগিন Password">
+        <p class="hint" style="margin-top:4px">নিরাপত্তার জন্য — কারো Password সেট/পরিবর্তন করতে আপনার নিজের বর্তমান Password যাচাই করা হয়।</p>
+      </div>
       <div class="fg"><label>Notes</label><input type="text" id="mm-notes" placeholder="Optional"></div>
     </div>
     <div class="m-foot"><button class="btn" onclick="closeM('ov-member')">বাতিল</button><button class="btn primary" id="save-mem" onclick="saveMember()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>Save</button></div>
@@ -503,6 +508,7 @@
       <div class="fg"><label>নাম</label><input type="text" id="aa-name" placeholder="নাম"></div>
       <div class="fg"><label>ফোন নম্বর *</label><input type="tel" id="aa-phone" placeholder="ফোন নম্বর"></div>
       <div class="fg"><label>Password *</label><input type="password" id="aa-pass" placeholder="কমপক্ষে ৪ ক্যারেক্টার"></div>
+      <div class="fg"><label>আপনার নিজের Password (নিশ্চিত করতে) *</label><input type="password" id="aa-my-pass" placeholder="আপনার বর্তমান লগিন Password"></div>
       <div id="aa-err" class="err-box"></div>
     </div>
     <div class="m-foot"><button class="btn" onclick="closeM('ov-addadmin')">বাতিল</button><button class="btn primary" id="save-aa" onclick="saveNewAdmin()">যোগ করুন</button></div>
