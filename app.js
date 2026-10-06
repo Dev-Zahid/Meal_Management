@@ -585,25 +585,19 @@ async function showSuperAdminDash(){
   await Promise.all([renderSuperAdminDash(), renderAdminList()]);
 }
 let saMessesCache=[];
-let saMembersCache=[];   // all members, all messes — used by the "Access as Member" picker
-let saManagerMap={};     // mess_id -> this month's manager member_id
 async function renderSuperAdminDash(){
   const body=document.getElementById('sa-mess-body');
   body.innerHTML=`<tr><td colspan="7" class="empty-row">লোড হচ্ছে...</td></tr>`;
-  const mon=curMon(),yr=curYr();
-  const [messesR,membersR,mealsR,bazarR,managersR]=await Promise.all([
+  const [messesR,membersR,mealsR,bazarR]=await Promise.all([
     supa.from('messes').select('*'),
-    supa.from('members').select('id,mess_id,name,phone,status'),
+    supa.from('members').select('id,mess_id,status'),
     supa.from('meal_entries').select('mess_id,date,meals,guest'),
     supa.from('bazar_expenses').select('mess_id,date,amount'),
-    supa.from('managers').select('mess_id,member_id').eq('month_year',mon+'-'+yr),
   ]);
   if(messesR.error){ body.innerHTML=`<tr><td colspan="7" class="empty-row">লোড করা যায়নি: ${escapeHtml(messesR.error.message)}</td></tr>`; return; }
   const messes=messesR.data||[], members=membersR.data||[], meals=mealsR.data||[], bazar=bazarR.data||[];
+  const mon=curMon(),yr=curYr();
   saMessesCache=messes;
-  saMembersCache=members;
-  saManagerMap={};
-  (managersR.data||[]).forEach(r=>{ saManagerMap[r.mess_id]=r.member_id; });
   const rows=messes.map(ms=>{
     const memList=members.filter(m=>m.mess_id===ms.id);
     const activeCount=memList.filter(m=>m.status==='Active').length;
@@ -626,8 +620,7 @@ async function renderSuperAdminDash(){
     <td data-label="এই মাসের বাজার" class="num">${money(r.monthBazar)}</td>
     <td data-label="তৈরি">${r.ms.created_at?fmtDate(r.ms.created_at.slice(0,10)):'—'}</td>
     <td data-label=""><div style="display:flex;gap:6px;justify-content:flex-end">
-      <button class="btn sm" onclick="openMessAsAdmin('${r.ms.id}')" title="এই মেসে Owner হিসেবে ঢুকুন">Open</button>
-      <button class="btn sm ghost" onclick="openAsMemberPicker('${r.ms.id}')" title="এই মেসের নির্দিষ্ট একজন Member হিসেবে ঢুকুন">সদস্য হিসেবে</button>
+      <button class="btn sm" onclick="openMessAsAdmin('${r.ms.id}')">Open</button>
       <button class="btn icon ghost sm" onclick="deleteMess('${r.ms.id}')" title="Delete">${ICONS.TRASH}</button>
     </div></td></tr>`).join('')||emptyRow(7,'কোনো mess তৈরি হয়নি এখনো');
 }
@@ -657,54 +650,6 @@ async function backToSuperAdminDash(){
   document.getElementById('app').style.display='none';
   document.getElementById('sa-dash-screen').style.display='flex';
   await renderSuperAdminDash();
-}
-/* ── Open a mess as one specific member (not always the Owner) ───
-   "Open" (openMessAsAdmin, উপরে) সবসময় Owner-লেভেল ফুল এক্সেস দেয়।
-   এটা আলাদা — Super Admin কোনো মেসের নির্দিষ্ট একজন member বেছে নিয়ে
-   ঠিক তার চোখেই অ্যাপটা দেখতে/চালাতে পারবে (সেই member Owner হলে Owner
-   এক্সেস, এই মাসের Manager হলে Manager এক্সেস, নাহলে শুধু View Only —
-   role নির্ণয় ঠিক doLogin()-এর মতোই, পাসওয়ার্ড ছাড়াই)। এটা মূলত কোনো
-   member কী দেখছে তা যাচাই/সাপোর্ট করার জন্য। */
-let oaMessId=null;
-function openAsMemberPicker(messId){
-  oaMessId=messId;
-  const mems=saMembersCache.filter(m=>m.mess_id===messId).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
-  const ms=saMessesCache.find(x=>x.id===messId);
-  const mgrId=saManagerMap[messId];
-  document.getElementById('oa-mess-name').textContent=ms?ms.name:messId;
-  document.getElementById('oa-member-select').innerHTML=mems.map(m=>{
-    const role=ms&&ms.owner_member_id===m.id?' — Owner':mgrId===m.id?' — এই মাসের Manager':'';
-    return `<option value="${m.id}">${escapeHtml(m.name||'(নাম নেই)')}${m.phone?' · '+escapeHtml(m.phone):''}${role}</option>`;
-  }).join('')||'<option value="">কোনো member নেই</option>';
-  document.getElementById('oa-err').style.display='none';
-  openM('ov-openas');
-}
-async function confirmOpenAsMember(){
-  const sel=document.getElementById('oa-member-select');
-  const memberId=sel.value;
-  const err=document.getElementById('oa-err');
-  if(!memberId){ err.textContent='কোনো member পাওয়া যায়নি'; err.style.display='block'; return; }
-  const ok=await openMessAsMember(oaMessId,memberId);
-  if(ok)closeM('ov-openas');
-  else { err.textContent='মেসের ডেটা লোড করা যায়নি'; err.style.display='block'; }
-}
-async function openMessAsMember(messId,memberId){
-  currentMessId=messId;
-  STATE=await loadState(messId);
-  if(!STATE)return false;
-  const row=STATE.members.find(m=>m.id===memberId);
-  if(!row)return false;
-  currentMember=row;
-  // role নির্ণয় ঠিক doLogin()/restoreSession()-এর মতোই — সেই member সত্যিকারের
-  // পাসওয়ার্ড দিয়ে লগিন করলে যা যা দেখতো/করতে পারতো, এখানেও ঠিক তাই।
-  isSuperAdmin=(STATE.settings.ownerMemberId===row.id);
-  const mgr=managerFor(curMon(),curYr());
-  isMonthManager=!!(mgr&&mgr.mid===row.id);
-  isAdmin=isSuperAdmin||isMonthManager;
-  applyTheme();
-  document.getElementById('sa-dash-screen').style.display='none';
-  showApp(true);
-  return true;
 }
 async function deleteMess(messId){
   // নাম এখানে JS state (saMessesCache) থেকে লুকআপ করা হয় — সরাসরি HTML
@@ -1848,21 +1793,67 @@ function isCarryForwardApplied(month,year){
   const marker=cfMarker(month,year);
   return STATE.deposits.some(p=>p.notes&&p.notes.includes(marker));
 }
+// ঐ মাসের জন্য ইতিমধ্যে তৈরি হওয়া carry-forward ডিপোজিট রো-গুলো (marker
+// দিয়ে চেনা)। এক মেম্বারের জন্য স্বাভাবিকভাবে একটাই রো থাকা উচিত।
+function cfDepositsFor(month,year){
+  const marker=cfMarker(month,year);
+  return STATE.deposits.filter(p=>p.notes&&p.notes.includes(marker));
+}
+// ─── BUG FIX: carry forward "stale" হয়ে যাওয়া ───────────────────
+// carry forward একবার করার পর যদি সেই (আগের) মাসের কোনো বাজার/মিল
+// এন্ট্রি/ডিপোজিট পরে এডিট/যোগ/ডিলিট করা হয় (যেমন কেউ মাস শেষের বাজার
+// রাতে/পরদিন সকালে এন্ট্রি দেয়), তাহলে সেই মাসের "আসল" ব্যালেন্স বদলে
+// যায় কিন্তু আগেই তৈরি হওয়া carry-forward ডিপোজিটটা পুরনো (ভুল) সংখ্যাতেই
+// আটকে থাকে — এটাই পরের মাসে ব্যালেন্স না-মেলার সবচেয়ে সম্ভাব্য কারণ।
+// এই ফাংশন প্রতি মেম্বারের জন্য "এখন হিসাব করলে যা হতো" বনাম "carry
+// forward রো-তে যা সেভ আছে" — দুটো তুলনা করে অমিল থাকলে লিস্ট করে।
+function carryForwardMismatches(month,year){
+  if(!isCarryForwardApplied(month,year))return [];
+  const existing=cfDepositsFor(month,year);
+  const members=STATE.members.filter(m=>m.status!=='Left'&&m.inMealFund!==false);
+  const out=[];
+  members.forEach(m=>{
+    // সঠিক হিসাব করতে হলে carry-forward রো-টা নিজেই বাদ দিয়ে ব্যালেন্স বের
+    // করতে হবে (নাহলে আগের carry-forward-ই নতুন carry-forward হিসাবে ঢুকে
+    // পড়বে) — তাই এই মেম্বারের সব ডিপোজিট থেকে তার CF রো-টা সাময়িকভাবে
+        // বাদ রেখে memberSummary-এর মতোই হিসাব করা হচ্ছে।
+    const row=existing.find(p=>p.mid===m.id);
+    const {m:mc,g:gc}=memberMealCount(m.id,month,year);
+    const {rate}=mealRateFor(month,year);
+    const mealCost=Math.round((mc+gc)*rate);
+    const dep=STATE.deposits.filter(p=>p.mid===m.id&&(p.type||'Meal')==='Meal'&&inMonth(p.date,month,year)&&(!row||p.id!==row.id)).reduce((a,p)=>a+N(p.amount),0);
+    const correct=Math.round(dep-mealCost);
+    const recorded=row?Math.round(N(row.amount)):0;
+    if(recorded!==correct)out.push({mid:m.id,name:m.name,recorded,correct,rowId:row?row.id:null});
+  });
+  return out;
+}
 function checkCarryForwardDue(){
   const banner=document.getElementById('cf-banner');
   if(!banner)return;
   if(!isMonthManager){ banner.innerHTML=''; return; }
   const {month,year}=prevMonthYear();
+  if(isCarryForwardApplied(month,year)){
+    // আগেই করা হয়ে গেছে — এখন চেক করি সেটা এখনো ঠিক আছে কিনা (উপরের নোট
+    // দেখুন — পরে এডিট হলে stale হয়ে যেতে পারে)।
+    const mismatches=carryForwardMismatches(month,year);
+    if(!mismatches.length){ banner.innerHTML=''; return; }
+    const diffList=mismatches.map(x=>`${escapeHtml(x.name)} (ছিল ${money(x.recorded)}, এখন হওয়া উচিত ${money(x.correct)})`).join(', ');
+    banner.innerHTML=`<div class="ibox warn" style="margin-bottom:16px;align-items:center">${ICONS.ALERT}
+      <div style="flex:1"><b>${month} ${year}</b> carry forward করার পর ওই মাসের বাজার/মিল/ডিপোজিট ডেটা বদলেছে, তাই ${mismatches.length} জনের carry-forward ব্যালেন্স আর ঠিক নেই: ${diffList}</div>
+      <button class="btn sm primary" onclick="resyncCarryForward('${month}',${year})">ঠিক করে দিন</button></div>`;
+    return;
+  }
   const {bazar,meals}=mealRateFor(month,year);
   const hadActivity=bazar>0||meals>0;
-  if(!hadActivity||isCarryForwardApplied(month,year)){ banner.innerHTML=''; return; }
+  if(!hadActivity){ banner.innerHTML=''; return; }
   banner.innerHTML=`<div class="ibox warn" style="margin-bottom:16px;align-items:center">${ICONS.ALERT}
     <div style="flex:1"><b>${month} ${year}</b>-এর Meal Fund ব্যালেন্স এখনো পরের মাসে carry forward করা হয়নি।</div>
     <button class="btn sm primary" onclick="doCarryForward('${month}',${year})">Carry Forward করুন</button></div>`;
 }
 async function doCarryForward(month,year){
   if(!requireManager())return;
-  if(isCarryForwardApplied(month,year)){ toast('এই মাসের carry forward আগেই করা হয়েছে','er'); return; }
+  if(isCarryForwardApplied(month,year)){ toast('এই মাসের carry forward আগেই করা হয়েছে — ডেটা পরে বদলে থাকলে "ঠিক করে দিন" বাটন ব্যবহার করুন','er'); return; }
   const targetDate=nextMonthFirstDate(month,year);
   const members=STATE.members.filter(m=>m.status!=='Left'&&m.inMealFund!==false);
   const marker=cfMarker(month,year);
@@ -1876,6 +1867,39 @@ async function doCarryForward(month,year){
   const dbRows=rows.map(r=>({id:r.id,mess_id:currentMessId,date:r.date,member_id:r.mid,member_name:r.name,amount:r.amount,method:r.method,type:r.type,notes:r.notes}));
   const ok=await dbOp(supa.from('deposits').insert(dbRows),'Carry forward করা যায়নি');
   if(ok){ STATE.deposits.push(...rows); persist(`${month} ${year}-এর ব্যালেন্স carry forward হয়েছে`); }
+}
+// আগে করা carry-forward "stale" হয়ে গেলে (উপরের carryForwardMismatches
+// দেখুন) এটা পুরনো CF ডিপোজিট রো-গুলোকে নতুন সঠিক amount দিয়ে আপডেট করে
+// (ডুপ্লিকেট রো তৈরি না করেই) — যার ব্যালেন্স এখন ০ তার রো ডিলিট হয়ে যায়,
+// আর নতুন করে কারো non-zero ব্যালেন্স হলে (আগে CF রো-ই ছিল না) তার জন্য
+// নতুন রো তৈরি হয়।
+async function resyncCarryForward(month,year){
+  if(!requireManager())return;
+  const mismatches=carryForwardMismatches(month,year);
+  if(!mismatches.length){ toast('কোনো অমিল নেই','ok'); return; }
+  const marker=cfMarker(month,year);
+  const targetDate=nextMonthFirstDate(month,year);
+  const toDeleteIds=mismatches.filter(x=>x.correct===0&&x.rowId).map(x=>x.rowId);
+  const toUpsert=mismatches.filter(x=>x.correct!==0).map(x=>({
+    id:x.rowId||genId('DEP-'), date:targetDate, mid:x.mid, name:x.name, amount:x.correct,
+    method:'Carry Forward', type:'Meal', notes:`গত মাসের ব্যালেন্স স্থানান্তর ${marker} (রি-সিঙ্ক করা হয়েছে)`
+  }));
+  if(toDeleteIds.length){
+    const {error}=await supa.from('deposits').delete().in('id',toDeleteIds);
+    if(error){ toast('ঠিক করা যায়নি: '+error.message,'er'); return; }
+  }
+  if(toUpsert.length){
+    const dbRows=toUpsert.map(r=>({id:r.id,mess_id:currentMessId,date:r.date,member_id:r.mid,member_name:r.name,amount:r.amount,method:r.method,type:r.type,notes:r.notes}));
+    const ok=await dbOp(supa.from('deposits').upsert(dbRows),'ঠিক করা যায়নি');
+    if(!ok)return;
+  }
+  STATE.deposits=STATE.deposits.filter(p=>!toDeleteIds.includes(p.id));
+  toUpsert.forEach(r=>{
+    const idx=STATE.deposits.findIndex(p=>p.id===r.id);
+    if(idx>=0)STATE.deposits[idx]={...STATE.deposits[idx],...r};
+    else STATE.deposits.push(r);
+  });
+  persist(`${month} ${year}-এর carry forward ঠিক করা হয়েছে`);
 }
 
 /* ═══════════════════════════════════════════════════════════
