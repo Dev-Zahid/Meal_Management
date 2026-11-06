@@ -15,6 +15,8 @@ create table if not exists messes (
   -- মিল অনুরোধ জমা দেওয়ার শেষ সময় (২৪ঘণ্টা ফরম্যাট, 'HH:MM') — ডিফল্ট
   -- রাত ১২টা। Owner/Manager Dashboard থেকে বদলাতে পারবে।
   meal_cutoff text not null default '00:00',
+  -- কোন কোন মিল-সময় (breakfast/lunch/dinner) active — Owner/Manager বদলাতে পারে
+  active_meals text not null default 'lunch,dinner',
   created_at timestamptz not null default now()
 );
 
@@ -117,8 +119,13 @@ create table if not exists meal_requests (
   date date not null,
   member_id text not null,
   member_name text not null,
+  breakfast boolean default false,
   lunch boolean default true,
   dinner boolean default true,
+  -- মেম্বার যতজন গেস্টের জন্য মিল চেয়েছে (প্রতি মিল-সময়ে)
+  g_breakfast int default 0,
+  g_lunch int default 0,
+  g_dinner int default 0,
   primary key (mess_id, date, member_id)
 );
 

@@ -150,7 +150,20 @@ function isEligibleForMeal(m,dateISO){
 /* ═══════════════════════════════════════════════════════════
    SUPABASE DATA LAYER
    ═══════════════════════════════════════════════════════════ */
-function emptySettings(){ return {messName:'',theme:'light',ownerMemberId:'',mealCutoff:'00:00'}; }
+function emptySettings(){ return {messName:'',theme:'light',ownerMemberId:'',mealCutoff:'00:00',activeMeals:['lunch','dinner']}; }
+// messes.active_meals (কমা-দিয়ে-আলাদা টেক্সট, যেমন 'lunch,dinner') ↔ array।
+// খালি/অচেনা হলে ডিফল্ট lunch+dinner (আগের আচরণ)।
+const ALL_MEAL_TYPES=['breakfast','lunch','dinner'];
+const MEAL_TYPE_LABEL={breakfast:'Breakfast',lunch:'Lunch',dinner:'Dinner'};
+function parseActiveMeals(txt){
+  const list=(txt||'').split(',').map(x=>x.trim()).filter(t=>ALL_MEAL_TYPES.includes(t));
+  return list.length?list:['lunch','dinner'];
+}
+// এই মেসে এখন যে যে মিল-সময় active — সবসময় breakfast→lunch→dinner ক্রমে।
+function activeMealTypes(){
+  const set=(STATE&&STATE.settings&&STATE.settings.activeMeals)||['lunch','dinner'];
+  return ALL_MEAL_TYPES.filter(t=>set.includes(t));
+}
 let STATE=null;
 
 // Generates a globally-unique-enough id (no longer relies on scanning an
@@ -188,7 +201,7 @@ async function loadState(messId){
   return {
     messId,
     settings: s.data ? {
-      messName:s.data.name||'', theme:s.data.theme||'light', ownerMemberId:s.data.owner_member_id||'', mealCutoff:s.data.meal_cutoff||'00:00'
+      messName:s.data.name||'', theme:s.data.theme||'light', ownerMemberId:s.data.owner_member_id||'', mealCutoff:s.data.meal_cutoff||'00:00', activeMeals:parseActiveMeals(s.data.active_meals)
     } : emptySettings(),
     members:(mem.data||[]).map(r=>({id:r.id,name:r.name,phone:r.phone||'',hasPassword:!!r.has_password,status:r.status,joined:r.joined||'',left:r.left_date||'',inactiveFrom:r.inactive_from||'',inactiveTo:r.inactive_to||'',inMealFund:r.in_meal_fund!==false,inOtherFund:r.in_other_fund!==false,notes:r.notes||''})),
     mealEntries:(meals.data||[]).map(r=>({id:r.id,date:r.date,mid:r.member_id,name:r.member_name,meals:Number(r.meals),guest:Number(r.guest),notes:r.notes||''})),
@@ -200,22 +213,55 @@ async function loadState(messId){
     dayNotes:(dn.data||[]).map(r=>({date:r.date,note:r.note||''})),
     // মেম্বারের আগের রাতে দেওয়া "আগামীকাল Lunch/Dinner লাগবে কিনা" —
     // Manager আসল সংখ্যার সাথে মিলিয়ে চূড়ান্ত করে।
-    mealRequests:(mr.data||[]).map(r=>({date:r.date,mid:r.member_id,name:r.member_name,lunch:r.lunch!==false,dinner:r.dinner!==false})),
+    mealRequests:(mr.data||[]).map(r=>({date:r.date,mid:r.member_id,name:r.member_name,breakfast:r.breakfast===true,lunch:r.lunch!==false,dinner:r.dinner!==false,gBreakfast:N(r.g_breakfast),gLunch:N(r.g_lunch),gDinner:N(r.g_dinner)})),
   };
 }
 function dayNoteFor(dateISO){ const r=(STATE.dayNotes||[]).find(x=>x.date===dateISO); return r?r.note:''; }
-// একটা নির্দিষ্ট মেম্বার একটা নির্দিষ্ট তারিখের জন্য মিল "চেয়েছিল" কিনা —
-// থাকলে সংখ্যা, না থাকলে null (অর্থাৎ "জানায়নি", ০ থেকে আলাদা)।
-// একটা নির্দিষ্ট মেম্বার একটা নির্দিষ্ট তারিখের জন্য কোন মিল (Lunch/Dinner)
-// "চেয়েছিল" কিনা — থাকলে {lunch,dinner} (true/false), না থাকলে null
-// (অর্থাৎ "জানায়নি")।
-function requestFor(mid,dateISO){ const r=(STATE.mealRequests||[]).find(x=>x.mid===mid&&x.date===dateISO); return r?{lunch:r.lunch!==false,dinner:r.dinner!==false}:null; }
-// অনুরোধের মোট সংখ্যা (Lunch+Dinner মিলিয়ে ০/১/২) — Manager-এর গ্রিডে আসল
-// সংখ্যার সাথে মিলছে কিনা তুলনা করার জন্য।
-function requestTotal(mid,dateISO){ const r=requestFor(mid,dateISO); return r?(r.lunch?1:0)+(r.dinner?1:0):null; }
-// অনুরোধ থেকে "Lunch ✓ · Dinner ✗" স্টাইলের ব্যাজ বানায় — Manager স্পষ্ট
-// দেখতে পারে কোন মিল চলবে, কোনটা বন্ধ থাকবে (বাধ্যতামূলক একটা সংখ্যা না)।
-function reqBadgeHtml(req){ return `<span class="badge bl">Lunch ${req.lunch?'✓':'✗'} · Dinner ${req.dinner?'✓':'✗'}</span>`; }
+// একটা নির্দিষ্ট মেম্বার একটা নির্দিষ্ট তারিখের জন্য কোন মিল (Breakfast/Lunch/Dinner)
+// আর কতজন গেস্টের মিল "চেয়েছিল" — থাকলে অবজেক্ট, না থাকলে null ("জানায়নি")।
+function requestFor(mid,dateISO){
+  const r=(STATE.mealRequests||[]).find(x=>x.mid===mid&&x.date===dateISO);
+  return r?{breakfast:r.breakfast===true,lunch:r.lunch!==false,dinner:r.dinner!==false,
+    guest:{breakfast:N(r.gBreakfast),lunch:N(r.gLunch),dinner:N(r.gDinner)}}:null;
+}
+// মেম্বারের নিজের মিলের সংখ্যা (শুধু active টাইপ গোনা হয়) — Manager-এর গ্রিডে
+// আসল সংখ্যার সাথে তুলনার জন্য। গেস্ট এখানে ধরা হয় না (আলাদা)।
+function requestTotal(mid,dateISO){ const r=requestFor(mid,dateISO); return r?activeMealTypes().reduce((a,t)=>a+(r[t]?1:0),0):null; }
+function requestGuestTotal(mid,dateISO){ const r=requestFor(mid,dateISO); return r?activeMealTypes().reduce((a,t)=>a+N(r.guest[t]),0):0; }
+// "Lunch ✓ · Dinner ✗ · Guest L2 D1" স্টাইলের ব্যাজ।
+function reqBadgeHtml(req){
+  const act=activeMealTypes();
+  const g=act.filter(t=>N(req.guest[t])>0).map(t=>MEAL_TYPE_LABEL[t][0]+req.guest[t]).join(' ');
+  return `<span class="badge bl">${act.map(t=>MEAL_TYPE_LABEL[t]+' '+(req[t]?'✓':'✗')).join(' · ')}${g?' · Guest '+g:''}</span>`;
+}
+function reqSummaryText(req){ return activeMealTypes().map(t=>MEAL_TYPE_LABEL[t]+' '+(req&&req[t]?'✓':'✗')).join(' · '); }
+// কোনো তারিখে রান্নার জন্য মোট কত মিল — প্রতিটা active টাইপে (মেম্বার + গেস্ট)।
+// শুধু সেই তারিখে eligible মেম্বারদের ধরা হয়; কে কে জানায়নি তাও গোনা হয়।
+function mealTypeTotals(dateISO){
+  const act=activeMealTypes();
+  const t={}; act.forEach(k=>t[k]={members:0,guests:0});
+  let notReplied=0, repliedCount=0;
+  STATE.members.filter(m=>isEligibleForMeal(m,dateISO)).forEach(m=>{
+    const r=requestFor(m.id,dateISO);
+    if(!r){notReplied++;return;}
+    repliedCount++;
+    act.forEach(k=>{ if(r[k])t[k].members++; t[k].guests+=N(r.guest[k]); });
+  });
+  return {types:t,notReplied,repliedCount};
+}
+function cookTotalsHtml(dateISO,label){
+  const {types,notReplied}=mealTypeTotals(dateISO);
+  const cells=activeMealTypes().map(k=>{
+    const x=types[k], tot=x.members+x.guests;
+    return `<div style="flex:1;min-width:110px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;text-align:center">
+      <div class="hint" style="margin:0">${MEAL_TYPE_LABEL[k]}</div>
+      <div style="font-size:22px;font-weight:700">${tot}</div>
+      <div class="hint" style="margin:0">${x.members} মেম্বার${x.guests>0?' + '+x.guests+' গেস্ট':''}</div></div>`;
+  }).join('');
+  return `<div style="margin-bottom:10px"><div style="font-weight:600;margin-bottom:6px">${label} — ${fmtDate(dateISO)}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">${cells}</div>
+    ${notReplied>0?`<p class="hint" style="margin:6px 0 0">${notReplied} জন এখনো জানায়নি (তাদের ধরা হয়নি)</p>`:''}</div>`;
+}
 function tomorrowISO(){ const d=new Date(); d.setDate(d.getDate()+1); return toLocalISODate(d); }
 // Runs a Supabase write and shows a toast on failure. Returns true/false.
 async function dbOp(promise,failMsg){
@@ -929,27 +975,39 @@ function fmtTimeHM(hhmm){
   const period=h>=12?'PM':'AM', h12=h%12===0?12:h%12;
   return h12+':'+String(m).padStart(2,'0')+' '+period;
 }
+// Manager/Owner-এর জন্য: আজ আর আগামীকালের রান্নার মোট সংখ্যা (টাইপ অনুযায়ী)।
+function renderCookTotals(){
+  const c=document.getElementById('cook-total-card'); if(!c)return;
+  if(!isAdmin){ c.style.display='none'; return; }
+  c.style.display='';
+  document.getElementById('cook-total-body').innerHTML=cookTotalsHtml(todayISO(),'আজ')+cookTotalsHtml(tomorrowISO(),'আগামীকাল');
+}
 function renderMealRequestCard(){
+  renderCookTotals();
   const card=document.getElementById('meal-request-card'); if(!card)return;
   const target=mealRequestTarget();
   const tmw=target.date, locked=target.locked;
-  const dayLabel=(tmw===todayISO())?'আজ':'আগামীকাল'; // ভোররাতের কাট-অফের সময় target আজকের তারিখও হতে পারে
+  const dayLabel=(tmw===todayISO())?'আজ':'আগামীকাল';
   if(!currentMember||!isEligibleForMeal(currentMember,tmw)){ card.style.display='none'; return; }
   card.style.display='';
   const cutoff=STATE.settings.mealCutoff||'00:00';
+  const active=activeMealTypes();
   document.getElementById('mr-date-lab').textContent=locked
     ? dayLabel+', '+fmtDate(tmw)+' — আজ রাত '+fmtTimeHM(cutoff)+'-এর সময়সীমা পার হয়ে গেছে, আর পরিবর্তন করা যাবে না।'
     : dayLabel+', '+fmtDate(tmw)+' — '+fmtTimeHM(cutoff)+'-এর মধ্যে জানিয়ে দিন, সেই হিসাবে বাজার/রান্না ঠিক হবে।';
   const existing=requestFor(currentMember.id,tmw);
-  // আগে কিছু জানানো না থাকলে ডিফল্ট দুটোই চেক করা থাকে (স্বাভাবিক দিন
-  // ধরে নিয়ে) — বন্ধ রাখতে চাইলে মেম্বার নিজেই আনচেক করে দেবে।
-  const lunch=existing?existing.lunch:true, dinner=existing?existing.dinner:true;
-  document.getElementById('mr-lunch').checked=lunch;
-  document.getElementById('mr-dinner').checked=dinner;
-  document.getElementById('mr-lunch').disabled=locked;
-  document.getElementById('mr-dinner').disabled=locked;
-  document.getElementById('mr-lunch-label').classList.toggle('active',lunch);
-  document.getElementById('mr-dinner-label').classList.toggle('active',dinner);
+  // শুধু active মিল-টাইপের কলাম দেখানো হয়। আগে কিছু জানানো না থাকলে ডিফল্ট
+  // সব active টাইপ চেক করা, গেস্ট ০।
+  ALL_MEAL_TYPES.forEach(t=>{
+    const wrap=document.getElementById('mr-'+t+'-wrap'); if(!wrap)return;
+    if(!active.includes(t)){ wrap.style.display='none'; return; }
+    wrap.style.display='';
+    const checked=existing?existing[t]:true;
+    const cb=document.getElementById('mr-'+t), gi=document.getElementById('mr-g-'+t);
+    cb.checked=checked; cb.disabled=locked;
+    gi.value=existing&&existing.guest[t]>0?existing.guest[t]:''; gi.disabled=locked;
+    document.getElementById('mr-'+t+'-label').classList.toggle('active',checked);
+  });
   document.getElementById('mr-save-btn').style.display=locked?'none':'';
   const statusEl=document.getElementById('mr-status');
   if(locked){
@@ -957,37 +1015,57 @@ function renderMealRequestCard(){
     statusEl.innerHTML=ICONS.ALERT+`<span>সময়সীমা পার হয়ে গেছে — ${existing?'যা জানিয়েছিলেন তাই চূড়ান্ত ধরা হবে':'কিছু জানানো হয়নি, তাই Manager নিজে ঠিক করবেন'}। পরের দিনের জন্য মধ্যরাতের পর আবার জানাতে পারবেন।</span>`;
   } else if(existing!==null){
     statusEl.className='ibox info';
-    const parts=[]; if(existing.lunch)parts.push('Lunch'); if(existing.dinner)parts.push('Dinner');
+    const parts=active.filter(t=>existing[t]).map(t=>MEAL_TYPE_LABEL[t]);
+    const gp=active.filter(t=>existing.guest[t]>0).map(t=>MEAL_TYPE_LABEL[t]+' '+existing.guest[t]+' জন');
     const summary=parts.length?parts.join(' + '):'কোনোটাই না (কাল মিল বন্ধ)';
-    statusEl.innerHTML=ICONS.CHECK+`<span>আপনি জানিয়েছেন: <b>${summary}</b>। বদলাতে চাইলে চেকবক্স বদলে আবার Save করুন।</span>`;
+    statusEl.innerHTML=ICONS.CHECK+`<span>আপনি জানিয়েছেন: <b>${summary}</b>${gp.length?' · গেস্ট: <b>'+gp.join(', ')+'</b>':''}। বদলাতে চাইলে বদলে আবার Save করুন।</span>`;
   } else {
     statusEl.className='ibox warn';
     statusEl.innerHTML=ICONS.ALERT+`<span>এখনো জানাননি — আজ ${fmtTimeHM(cutoff)}-এর আগে জানিয়ে দিন, নাহলে রান্নার হিসাবে আপনার মিল ধরা হবে না।</span>`;
   }
-  // কাট-অফ সময় সেট করার নিয়ন্ত্রণ — শুধু Owner/Manager দেখবে ও বদলাতে
-  // পারবে, সাধারণ মেম্বার শুধু উপরের ফর্মটাই দেখবে।
+  // Owner/Manager-এর নিয়ন্ত্রণ: কাট-অফ সময় + কোন কোন মিল-সময় active।
   const cutoffAdmin=document.getElementById('mr-cutoff-admin');
   if(cutoffAdmin){
     cutoffAdmin.style.display=isAdmin?'flex':'none';
-    const cutoffInput=document.getElementById('mr-cutoff-time');
-    if(cutoffInput)cutoffInput.value=cutoff;
+    const ci=document.getElementById('mr-cutoff-time'); if(ci)ci.value=cutoff;
+  }
+  const am=document.getElementById('mr-activemeals-admin');
+  if(am){
+    am.style.display=isAdmin?'flex':'none';
+    ALL_MEAL_TYPES.forEach(t=>{ const cb=document.getElementById('am-'+t); if(cb)cb.checked=active.includes(t); });
   }
 }
 async function saveMealRequest(){
   if(!currentMember)return;
   const tmw=mealRequestTarget().date;
-  const lunch=document.getElementById('mr-lunch').checked;
-  const dinner=document.getElementById('mr-dinner').checked;
+  const act=activeMealTypes();
+  const v={}, g={};
+  ALL_MEAL_TYPES.forEach(t=>{
+    const on=act.includes(t);
+    v[t]=on?document.getElementById('mr-'+t).checked:false;      // inactive টাইপ সবসময় false
+    g[t]=on?Math.max(0,Math.floor(N(document.getElementById('mr-g-'+t).value))):0;
+    if(!v[t]&&g[t]>0&&on){ /* মেম্বার নিজে না খেলেও গেস্টের মিল চাইতে পারে — অনুমোদিত */ }
+  });
   setBusy('mr-save-btn',true);
-  const ok=await dbOp(supa.from('meal_requests').upsert({mess_id:currentMessId,date:tmw,member_id:currentMember.id,member_name:currentMember.name,lunch,dinner},{onConflict:'mess_id,date,member_id'}),'জানানো যায়নি');
+  const ok=await dbOp(supa.from('meal_requests').upsert({mess_id:currentMessId,date:tmw,member_id:currentMember.id,member_name:currentMember.name,
+    breakfast:v.breakfast,lunch:v.lunch,dinner:v.dinner,g_breakfast:g.breakfast,g_lunch:g.lunch,g_dinner:g.dinner},{onConflict:'mess_id,date,member_id'}),'জানানো যায়নি');
   setBusy('mr-save-btn',false,'জানিয়ে দিন');
   if(ok){
     const idx=STATE.mealRequests.findIndex(x=>x.mid===currentMember.id&&x.date===tmw);
-    const rec={date:tmw,mid:currentMember.id,name:currentMember.name,lunch,dinner};
+    const rec={date:tmw,mid:currentMember.id,name:currentMember.name,breakfast:v.breakfast,lunch:v.lunch,dinner:v.dinner,gBreakfast:g.breakfast,gLunch:g.lunch,gDinner:g.dinner};
     if(idx>=0)STATE.mealRequests[idx]=rec; else STATE.mealRequests.push(rec);
     toast('জানানো হয়েছে ✅','ok');
     renderMealRequestCard();
   }
+}
+// Owner বা এই মাসের Manager — কোন কোন মিল-সময় active থাকবে ঠিক করে। যা বেছে
+// নেবে সেটাই পরের পরিবর্তন পর্যন্ত সব মেম্বারের জন্য চলতে থাকবে।
+async function saveActiveMeals(){
+  if(!isAdmin){ toast('শুধু Owner বা এই মাসের Manager এটা বদলাতে পারবেন','er'); return; }
+  const chosen=ALL_MEAL_TYPES.filter(t=>document.getElementById('am-'+t).checked);
+  if(!chosen.length){ toast('কমপক্ষে একটা মিল-সময় active রাখতে হবে','er'); return; }
+  const ok=await dbOp(supa.from('messes').update({active_meals:chosen.join(',')}).eq('id',currentMessId),'Save করা যায়নি');
+  if(ok){ STATE.settings.activeMeals=chosen; toast('মিল-সময় আপডেট হয়েছে','ok'); renderMealRequestCard(); if(typeof loadMealGrid==='function'&&curPage==='meals')loadMealGrid(); }
 }
 // Owner বা এই মাসের Manager — যেকেউ মিল অনুরোধের কাট-অফ সময় বদলাতে
 // পারবে (এটা মেস-ওয়াইড নিয়ম, তাই Members/Settings-এর মতো Owner-only না)।
@@ -1296,6 +1374,8 @@ function loadMealGrid(){
   const eligible=allActive.filter(m=>(!m.joined||m.joined<=mealSelDate)&&!isInactiveOn(m,mealSelDate));
   const notYetJoined=allActive.filter(m=>m.joined&&m.joined>mealSelDate);
   const inactiveNow=allActive.filter(m=>isInactiveOn(m,mealSelDate));
+  const sumEl=document.getElementById('meal-req-summary');
+  if(sumEl)sumEl.innerHTML=cookTotalsHtml(mealSelDate,'এই তারিখে রান্নার মোট (অনুরোধ অনুযায়ী)');
   const grid=document.getElementById('meal-grid');
   let noticeHtml=notYetJoined.length?`<div class="ibox warn" style="margin-bottom:10px">${ICONS.INFO}<div>${notYetJoined.map(m=>escapeHtml(m.name)+' ('+fmtDate(m.joined)+' থেকে যোগ)').join(', ')} — এই তারিখে এখনো মেসে যোগ দেননি, তাই মিল যোগ করা যাচ্ছে না।</div></div>`:'';
   if(inactiveNow.length)noticeHtml+=`<div class="ibox warn" style="margin-bottom:10px">${ICONS.INFO}<div>${inactiveNow.map(m=>escapeHtml(m.name)+' ('+fmtDate(m.inactiveFrom)+' – '+fmtDate(m.inactiveTo)+' পর্যন্ত Inactive)').join(', ')} — এই তারিখে Inactive হিসেবে চিহ্নিত, তাই মিল যোগ করা যাচ্ছে না।</div></div>`;
@@ -1311,7 +1391,9 @@ function loadMealGrid(){
   }
   grid.innerHTML=noticeHtml+eligible.map(m=>{
     const ex=STATE.mealEntries.find(e=>e.mid===m.id&&e.date===mealSelDate);
-    const hasGuest=!!(ex&&N(ex.guest)>0);
+    const reqGuest=(!ex)?requestGuestTotal(m.id,mealSelDate):0;   // এন্ট্রি এখনো না থাকলে অনুরোধের গেস্ট আগে থেকে বসানো
+    const hasGuest=!!(ex&&N(ex.guest)>0)||reqGuest>0;
+    const guestVal=ex&&N(ex.guest)>0?ex.guest:(reqGuest>0?reqGuest:'');
     // মেম্বার আগের রাতে যা "চেয়েছিল" (মেল রিকোয়েস্ট) — থাকলে দেখায়, আসল
     // সংখ্যা তার থেকে ভিন্ন হলে নিচে একটা বাধ্যতামূলক নোট ফিল্ড খুলে যায়।
     const req=requestFor(m.id,mealSelDate);
@@ -1325,9 +1407,9 @@ function loadMealGrid(){
         <input type="checkbox" id="mggc-${m.id}" ${hasGuest?'checked':''} onchange="toggleGuestInput('${m.id}')" style="width:14px;height:14px">
         Guest
       </label>
-      <div class="fld" id="gf-${m.id}" style="${hasGuest?'':'display:none'}"><label>Qty</label><input type="number" step="0.5" min="0" id="mgg-${m.id}" value="${hasGuest?ex.guest:''}" placeholder="1"></div>
+      <div class="fld" id="gf-${m.id}" style="${hasGuest?'':'display:none'}"><label>Qty</label><input type="number" step="0.5" min="0" id="mgg-${m.id}" value="${hasGuest?guestVal:''}" placeholder="1"></div>
       <div class="fg" id="mn-wrap-${m.id}" style="flex-basis:100%;margin:2px 0 0;${initialMismatch?'':'display:none'}">
-        <label style="color:var(--danger)">অনুরোধের (Lunch ${req&&req.lunch?'✓':'✗'} · Dinner ${req&&req.dinner?'✓':'✗'} = ${reqTotal}) সাথে মিলছে না — কেন ভিন্ন হলো লিখুন *</label>
+        <label style="color:var(--danger)">অনুরোধের (${reqSummaryText(req)} = ${reqTotal}) সাথে মিলছে না — কেন ভিন্ন হলো লিখুন *</label>
         <input type="text" id="mn-${m.id}" value="${escapeHtml(ex?ex.notes:'')}" placeholder="যেমনঃ ও বাসায় ছিল না তাই মিল বাদ, বা অতিরিক্ত মিল খেয়েছে">
       </div>
     </div>`;

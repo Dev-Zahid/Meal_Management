@@ -174,16 +174,33 @@
           <input type="number" id="dash-yr-f" placeholder="Year" style="width:90px" onchange="renderDash()">
         </div>
 
+        <div class="card" id="cook-total-card" style="margin-bottom:16px;display:none">
+          <div class="card-h" style="margin-bottom:8px"><h3>রান্নার মোট সংখ্যা (মেম্বারদের অনুরোধ অনুযায়ী)</h3></div>
+          <div id="cook-total-body"></div>
+        </div>
+
         <div class="card" id="meal-request-card" style="margin-bottom:16px;display:none">
           <div class="card-h" style="margin-bottom:8px"><h3>আগামীকালের মিল জানিয়ে দিন</h3></div>
           <p class="hint" id="mr-date-lab" style="margin-bottom:12px"></p>
-          <div style="display:flex;gap:10px">
-            <label class="guest-toggle" id="mr-lunch-label" style="flex:1;justify-content:center;padding:12px;font-size:14px">
-              <input type="checkbox" id="mr-lunch" onchange="document.getElementById('mr-lunch-label').classList.toggle('active',this.checked)" style="width:16px;height:16px">Lunch
-            </label>
-            <label class="guest-toggle" id="mr-dinner-label" style="flex:1;justify-content:center;padding:12px;font-size:14px">
-              <input type="checkbox" id="mr-dinner" onchange="document.getElementById('mr-dinner-label').classList.toggle('active',this.checked)" style="width:16px;height:16px">Dinner
-            </label>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <div id="mr-breakfast-wrap" style="flex:1;min-width:120px;display:none">
+              <label class="guest-toggle" id="mr-breakfast-label" style="justify-content:center;padding:12px;font-size:14px;width:100%;box-sizing:border-box">
+                <input type="checkbox" id="mr-breakfast" onchange="document.getElementById('mr-breakfast-label').classList.toggle('active',this.checked)" style="width:16px;height:16px">Breakfast
+              </label>
+              <div class="fld" style="margin-top:6px"><label>Guest (Breakfast)</label><input type="number" min="0" step="1" id="mr-g-breakfast" placeholder="0"></div>
+            </div>
+            <div id="mr-lunch-wrap" style="flex:1;min-width:120px;display:none">
+              <label class="guest-toggle" id="mr-lunch-label" style="justify-content:center;padding:12px;font-size:14px;width:100%;box-sizing:border-box">
+                <input type="checkbox" id="mr-lunch" onchange="document.getElementById('mr-lunch-label').classList.toggle('active',this.checked)" style="width:16px;height:16px">Lunch
+              </label>
+              <div class="fld" style="margin-top:6px"><label>Guest (Lunch)</label><input type="number" min="0" step="1" id="mr-g-lunch" placeholder="0"></div>
+            </div>
+            <div id="mr-dinner-wrap" style="flex:1;min-width:120px;display:none">
+              <label class="guest-toggle" id="mr-dinner-label" style="justify-content:center;padding:12px;font-size:14px;width:100%;box-sizing:border-box">
+                <input type="checkbox" id="mr-dinner" onchange="document.getElementById('mr-dinner-label').classList.toggle('active',this.checked)" style="width:16px;height:16px">Dinner
+              </label>
+              <div class="fld" style="margin-top:6px"><label>Guest (Dinner)</label><input type="number" min="0" step="1" id="mr-g-dinner" placeholder="0"></div>
+            </div>
           </div>
           <button class="btn primary block" id="mr-save-btn" onclick="saveMealRequest()" style="margin-top:12px">জানিয়ে দিন</button>
           <div class="ibox" id="mr-status" style="margin-top:12px"></div>
@@ -191,6 +208,13 @@
             <span class="hint" style="margin:0">Owner/Manager: মিল জানানোর শেষ সময় (কাট-অফ)</span>
             <input type="time" id="mr-cutoff-time" style="width:130px">
             <button class="btn sm" onclick="saveMealCutoff()">Save</button>
+          </div>
+          <div id="mr-activemeals-admin" style="display:none;margin-top:12px;align-items:center;gap:12px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border)">
+            <span class="hint" style="margin:0">Owner/Manager: কোন কোন মিল চালু থাকবে (মেম্বাররা শুধু এগুলোই দেখবে)</span>
+            <label style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="am-breakfast" style="width:16px;height:16px">Breakfast</label>
+            <label style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="am-lunch" style="width:16px;height:16px">Lunch</label>
+            <label style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="am-dinner" style="width:16px;height:16px">Dinner</label>
+            <button class="btn sm" onclick="saveActiveMeals()">Save</button>
           </div>
         </div>
 
@@ -256,6 +280,7 @@
               <button class="btn sm" onclick="quickFillMeals(1)">সবাইকে ১ Meal দিন</button>
               <button class="btn sm" onclick="quickFillMeals(2)">সবাইকে ২ Meal দিন</button>
             </div>
+            <div id="meal-req-summary" style="margin-bottom:12px"></div>
             <div id="meal-grid"></div>
             <button class="btn primary block" id="save-meal-grid" onclick="saveMealGrid()" style="margin-top:6px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6.5 9.5 17 4 12"/></svg>সবার এন্ট্রি Save করুন</button>
             <div class="fg" style="margin-top:14px;margin-bottom:0">

@@ -288,3 +288,12 @@ grant execute on function public.remove_platform_admin(text,text,text) to anon, 
 --   "শুধু Other Expense" বাছুন — আগের সব member ডিফল্টভাবে দুই ফান্ডেই
 --   থাকবে (in_meal_fund ও in_other_fund দুটোই true)।
 -- ═══════════════════════════════════════════════════════════════
+
+
+-- ৫.৪) Breakfast option, মেসভিত্তিক active মিল-সময়, আর গেস্ট মিলের অনুরোধ।
+-- ডিফল্ট 'lunch,dinner' — কিছু না বদলালে আগের মতোই শুধু Lunch/Dinner দেখাবে।
+alter table messes add column if not exists active_meals text not null default 'lunch,dinner';
+alter table meal_requests add column if not exists breakfast boolean default false;
+alter table meal_requests add column if not exists g_breakfast int default 0;
+alter table meal_requests add column if not exists g_lunch int default 0;
+alter table meal_requests add column if not exists g_dinner int default 0;
