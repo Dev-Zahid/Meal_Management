@@ -185,7 +185,7 @@ function genId(prefix){
 // "a password is set" without ever exposing the hash itself.
 const MEMBER_COLS='id,mess_id,name,phone,status,joined,left_date,inactive_from,inactive_to,in_other_fund,in_meal_fund,notes,has_password';
 async function loadState(messId){
-  const [s,mem,meals,bazar,other,dep,mgrs,dn,mr]=await Promise.all([
+  const [s,mem,meals,bazar,other,dep,mgrs,dn,mr,nt,nr]=await Promise.all([
     supa.from('messes').select('*').eq('id',messId).maybeSingle(),
     supa.from('members').select(MEMBER_COLS).eq('mess_id',messId),
     supa.from('meal_entries').select('*').eq('mess_id',messId),
@@ -195,8 +195,10 @@ async function loadState(messId){
     supa.from('managers').select('*').eq('mess_id',messId),
     supa.from('day_notes').select('*').eq('mess_id',messId),
     supa.from('meal_requests').select('*').eq('mess_id',messId),
+    supa.from('notices').select('*').eq('mess_id',messId).order('created_at',{ascending:false}),
+    supa.from('notice_reads').select('*').eq('mess_id',messId),
   ]);
-  const firstErr=[s,mem,meals,bazar,other,dep,mgrs,dn,mr].find(r=>r.error);
+  const firstErr=[s,mem,meals,bazar,other,dep,mgrs,dn,mr,nt,nr].find(r=>r.error);
   if(firstErr){ toast('Database connect করা যায়নি: '+firstErr.error.message,'er'); return null; }
   return {
     messId,
@@ -214,6 +216,8 @@ async function loadState(messId){
     // মেম্বারের আগের রাতে দেওয়া "আগামীকাল Lunch/Dinner লাগবে কিনা" —
     // Manager আসল সংখ্যার সাথে মিলিয়ে চূড়ান্ত করে।
     mealRequests:(mr.data||[]).map(r=>({date:r.date,mid:r.member_id,name:r.member_name,breakfast:r.breakfast===true,lunch:r.lunch!==false,dinner:r.dinner!==false,gBreakfast:N(r.g_breakfast),gLunch:N(r.g_lunch),gDinner:N(r.g_dinner)})),
+    notices:(nt.data||[]).map(r=>({id:r.id,title:r.title||'',body:r.body||'',authorId:r.author_id||'',authorName:r.author_name||'',createdAt:r.created_at})),
+    noticeReads:(nr.data||[]).map(r=>({nid:r.notice_id,mid:r.member_id})),
   };
 }
 function dayNoteFor(dateISO){ const r=(STATE.dayNotes||[]).find(x=>x.date===dateISO); return r?r.note:''; }
@@ -423,7 +427,7 @@ async function doSetup(){
   setBusy('su-btn',false,'খাতা তৈরি করুন');
   if(ownerLinkOk){
     currentMessId=messId;
-    STATE={messId,settings:{messName,theme:'light',ownerMemberId:ownerId},members:[{id:ownerId,name:ownerName,phone:ownerPhone,hasPassword:true,status:'Active',joined:todayISO(),left:'',inactiveFrom:'',inactiveTo:'',inMealFund:true,inOtherFund:true,notes:''}],mealEntries:[],bazarExp:[],otherExp:[],deposits:[],managers:[],dayNotes:[],mealRequests:[]};
+    STATE={messId,settings:{messName,theme:'light',ownerMemberId:ownerId},members:[{id:ownerId,name:ownerName,phone:ownerPhone,hasPassword:true,status:'Active',joined:todayISO(),left:'',inactiveFrom:'',inactiveTo:'',inMealFund:true,inOtherFund:true,notes:''}],mealEntries:[],bazarExp:[],otherExp:[],deposits:[],managers:[],dayNotes:[],mealRequests:[],notices:[],noticeReads:[]};
     document.getElementById('setup-screen').style.display='none';
     currentMember=STATE.members[0]; isSuperAdmin=true; isMonthManager=false; isAdmin=true;
     applyTheme();
@@ -760,7 +764,7 @@ async function deleteMess(messId){
   const ms=saMessesCache.find(x=>x.id===messId);
   const name=ms?ms.name:messId;
   if(!confirm(`"${name}" মেসটা পুরোপুরি ডিলিট করবেন? এর সব member/meal/bazar/deposit ইতিহাস চিরতরে মুছে যাবে — এটা আর ফেরত আনা যাবে না।`))return;
-  const tables=['meal_entries','bazar_expenses','other_expenses','deposits','managers','day_notes','meal_requests','members'];
+  const tables=['meal_entries','bazar_expenses','other_expenses','deposits','managers','day_notes','meal_requests','notice_reads','notices','members'];
   for(const t of tables){
     const {error}=await supa.from(t).delete().eq('mess_id',messId);
     if(error){ toast(`${t} ডিলিট করা যায়নি: `+error.message,'er'); return; }
@@ -809,7 +813,7 @@ function showApp(fromSuperAdmin){
   if(dashYrEl)dashYrEl.value=curYr();
   populateMemberSelects();
   // Settings (Mess name + Manager roster) is Super-Admin (Owner) only
-  document.querySelector('.sb-item[data-page="settings"]').style.display=isSuperAdmin?'':'none';
+  document.querySelector('.sb-item[data-page="settings"]').style.display=isAdmin?'':'none';
   document.getElementById('sb-whoami').innerHTML=`${ICONS.USERS}<span>${escapeHtml(currentMember.name)} ${isSuperAdmin?'(Owner)':isMonthManager?'(This Month\u2019s Manager)':'(View Only)'}</span>`;
   const backBtn=document.getElementById('sb-back-to-sa');
   if(backBtn)backBtn.style.display=(isPlatformAdmin&&fromSuperAdmin)?'':'none';
@@ -825,12 +829,109 @@ function showApp(fromSuperAdmin){
   } else if(vb){ vb.remove(); }
   goTo('dashboard');
   checkCarryForwardDue();
+  // না-দেখা নোটিশ থাকলে ড্যাশবোর্ডের ওপরেই পপআপ (Super Admin শুধু দেখতে ঢুকলে নয়)
+  if(!fromSuperAdmin)showNoticePopup(); else updateNoticeBadge();
+}
+
+/* ═══ নোটিশ সিস্টেম ═════════════════════════════════════════════════
+   Owner/এই মাসের Manager নোটিশ দেয় (Notices পেজ থেকে)। মেম্বার লগইন করলে
+   ড্যাশবোর্ড খোলার সাথে সাথে তার না-দেখা নোটিশগুলো পপআপে আসে; "ঠিক আছে"
+   চাপলে notice_reads-এ সেভ হয় — তাই পরের লগইনে আর আসে না। পুরনো সব
+   নোটিশ Notices পেজে সবসময় দেখা যায়। */
+function noticeAuthorOk(){ return isAdmin; }
+function isRealMember(){ return !!(currentMember&&currentMember.id&&currentMember.id!=='SA'&&STATE.members.some(m=>m.id===currentMember.id)); }
+function unreadNotices(){
+  if(!isRealMember())return [];
+  const read=new Set((STATE.noticeReads||[]).filter(r=>r.mid===currentMember.id).map(r=>r.nid));
+  return (STATE.notices||[]).filter(n=>!read.has(n.id));
+}
+function fmtNoticeTime(iso){
+  const d=new Date(iso); if(isNaN(d))return '';
+  return fmtDate(toLocalISODate(d))+', '+fmtTimeHM(String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'));
+}
+function noticeCardHtml(n,withDelete,isNew){
+  return `<div class="card" style="margin-bottom:10px;padding:14px">
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+      <div style="font-weight:700;font-size:15px">${isNew?'<span class="badge bl" style="margin-right:6px">নতুন</span>':''}${escapeHtml(n.title)||'নোটিশ'}</div>
+      ${withDelete?`<button class="btn icon ghost sm" onclick="deleteNotice('${n.id}')" title="Delete">${ICONS.TRASH}</button>`:''}
+    </div>
+    <div style="white-space:pre-wrap;margin:8px 0;line-height:1.55">${escapeHtml(n.body)}</div>
+    <div class="hint" style="margin:0">${escapeHtml(n.authorName||'')} · ${fmtNoticeTime(n.createdAt)}</div></div>`;
+}
+function updateNoticeBadge(){
+  const b=document.getElementById('notice-badge'); if(!b)return;
+  const c=unreadNotices().length;
+  b.textContent=c; b.style.display=c>0?'':'none';
+}
+function renderNotices(){
+  const comp=document.getElementById('notice-composer');
+  if(comp)comp.style.display=noticeAuthorOk()?'':'none';
+  const unread=new Set(unreadNotices().map(n=>n.id));
+  const list=STATE.notices||[];
+  document.getElementById('notice-list').innerHTML=list.map(n=>noticeCardHtml(n,isAdmin,unread.has(n.id))).join('')
+    ||`<div class="empty">${ICONS.EMPTY}<p>এখনো কোনো নোটিশ দেওয়া হয়নি</p></div>`;
+  updateNoticeBadge();
+}
+async function postNotice(){
+  if(!noticeAuthorOk()){ toast('শুধু Owner বা এই মাসের Manager নোটিশ দিতে পারবেন','er'); return; }
+  const title=document.getElementById('nt-title').value.trim();
+  const body=document.getElementById('nt-body').value.trim();
+  if(!body){ toast('নোটিশের লেখা দিন','er'); return; }
+  const id=genId('NT-');
+  const authorId=isRealMember()?currentMember.id:'';
+  const authorName=currentMember?currentMember.name:'';
+  setBusy('nt-post-btn',true);
+  const ok=await dbOp(supa.from('notices').insert({id,mess_id:currentMessId,title,body,author_id:authorId,author_name:authorName}),'নোটিশ দেওয়া যায়নি');
+  setBusy('nt-post-btn',false,'নোটিশ দিন');
+  if(!ok)return;
+  STATE.notices.unshift({id,title,body,authorId,authorName,createdAt:new Date().toISOString()});
+  // যে দিল তার নিজের কাছে আবার পপআপ আসার দরকার নেই — তাই নিজের জন্য আগেই "পড়া হয়েছে" ধরা হয়
+  if(authorId){
+    const r=await supa.from('notice_reads').upsert({mess_id:currentMessId,notice_id:id,member_id:authorId},{onConflict:'notice_id,member_id'});
+    if(!r.error)STATE.noticeReads.push({nid:id,mid:authorId});
+  }
+  document.getElementById('nt-title').value=''; document.getElementById('nt-body').value='';
+  toast('নোটিশ দেওয়া হয়েছে — মেম্বাররা পরের লগইনে পপআপে দেখবে ✅','ok');
+  renderNotices();
+}
+async function deleteNotice(id){
+  if(!noticeAuthorOk())return;
+  if(!confirm('এই নোটিশটি মুছে ফেলবেন?'))return;
+  const r1=await supa.from('notice_reads').delete().eq('notice_id',id).eq('mess_id',currentMessId);
+  const ok=await dbOp(supa.from('notices').delete().eq('id',id).eq('mess_id',currentMessId),'মুছা যায়নি');
+  if(!ok||r1.error)return;
+  STATE.notices=STATE.notices.filter(n=>n.id!==id);
+  STATE.noticeReads=STATE.noticeReads.filter(r=>r.nid!==id);
+  toast('নোটিশ মুছে ফেলা হয়েছে','ok');
+  renderNotices();
+}
+// লগইনের পর ড্যাশবোর্ড দেখানো শেষে ডাকা হয় — না-দেখা নোটিশ থাকলেই পপআপ খোলে।
+function showNoticePopup(){
+  const list=unreadNotices();
+  updateNoticeBadge();
+  if(!list.length)return;
+  document.getElementById('np-body').innerHTML=list.map(n=>noticeCardHtml(n,false,false)).join('');
+  document.getElementById('np-count').textContent=list.length>1?`(${list.length}টি নতুন নোটিশ)`:'';
+  openM('ov-notice-popup');
+}
+async function ackNotices(){
+  const list=unreadNotices();
+  if(!list.length||!isRealMember()){ closeM('ov-notice-popup'); return; }
+  setBusy('np-ok-btn',true);
+  const rows=list.map(n=>({mess_id:currentMessId,notice_id:n.id,member_id:currentMember.id}));
+  const {error}=await supa.from('notice_reads').upsert(rows,{onConflict:'notice_id,member_id'});
+  setBusy('np-ok-btn',false,'ঠিক আছে');
+  if(error){ toast('সেভ করা যায়নি: '+error.message,'er'); return; }   // পপআপ খোলা থাকে, আবার চাপা যাবে
+  list.forEach(n=>STATE.noticeReads.push({nid:n.id,mid:currentMember.id}));
+  closeM('ov-notice-popup');
+  updateNoticeBadge();
+  if(curPage==='notices')renderNotices();
 }
 function openDrawer(){document.getElementById('sidebar').classList.add('on');document.getElementById('drawerBd').classList.add('on');}
 function closeDrawer(){document.getElementById('sidebar').classList.remove('on');document.getElementById('drawerBd').classList.remove('on');}
 
 
-const PG={dashboard:'Dashboard',members:'Members',meals:'Daily Meal Entry',bazar:'Bazar Expense',other:'Other Expenses',deposits:'Deposits (Meal Fund)',summary:'Monthly Summary (Meal Fund)',settings:'Settings'};
+const PG={notices:'Notices',dashboard:'Dashboard',members:'Members',meals:'Daily Meal Entry',bazar:'Bazar Expense',other:'Other Expenses',deposits:'Deposits (Meal Fund)',summary:'Monthly Summary (Meal Fund)',settings:'Settings'};
 const PG_ADD={members:'Add Member',bazar:'Add Bazar Expense',other:'Add Other Expense',deposits:'Add Deposit (Meal Fund)'};
 function goTo(p){
   curPage=p;
@@ -851,6 +952,7 @@ function renderPage(p){
   else if(p==='deposits')renderDeposits();
   else if(p==='summary')renderSummary();
   else if(p==='settings')renderSettings();
+  else if(p==='notices')renderNotices();
 }
 function refreshAll(){populateMemberSelects();renderPage(curPage);if(currentMember)checkCarryForwardDue();}
 function doAdd(){
@@ -982,6 +1084,12 @@ function renderCookTotals(){
   c.style.display='';
   document.getElementById('cook-total-body').innerHTML=cookTotalsHtml(todayISO(),'আজ')+cookTotalsHtml(tomorrowISO(),'আগামীকাল');
 }
+function toggleReqGuest(){
+  const on=document.getElementById('mr-guest-cb').checked;
+  document.getElementById('mr-guest-label').classList.toggle('active',on);
+  document.getElementById('mr-guest-box').style.display=on?'flex':'none';
+  if(!on)ALL_MEAL_TYPES.forEach(t=>{ const gi=document.getElementById('mr-g-'+t); if(gi)gi.value=''; });
+}
 function renderMealRequestCard(){
   renderCookTotals();
   const card=document.getElementById('meal-request-card'); if(!card)return;
@@ -1007,7 +1115,16 @@ function renderMealRequestCard(){
     cb.checked=checked; cb.disabled=locked;
     gi.value=existing&&existing.guest[t]>0?existing.guest[t]:''; gi.disabled=locked;
     document.getElementById('mr-'+t+'-label').classList.toggle('active',checked);
+    const gw=document.getElementById('mr-gwrap-'+t); if(gw)gw.style.display='';
   });
+  ALL_MEAL_TYPES.forEach(t=>{ if(!active.includes(t)){ const gw=document.getElementById('mr-gwrap-'+t); if(gw)gw.style.display='none'; } });
+  // গেস্ট মিলের অংশ ডিফল্টে লুকানো — "Guest meal" চেকবক্সে টিক দিলে তবেই
+  // প্রতিটা মিলের গেস্ট সংখ্যার ঘর খোলে। আগে গেস্ট জানানো থাকলে টিক দেওয়া অবস্থায় খোলে।
+  const hasG=!!existing&&active.some(t=>existing.guest[t]>0);
+  const gcb=document.getElementById('mr-guest-cb');
+  gcb.checked=hasG; gcb.disabled=locked;
+  document.getElementById('mr-guest-label').classList.toggle('active',hasG);
+  document.getElementById('mr-guest-box').style.display=hasG?'flex':'none';
   document.getElementById('mr-save-btn').style.display=locked?'none':'';
   const statusEl=document.getElementById('mr-status');
   if(locked){
@@ -1023,17 +1140,6 @@ function renderMealRequestCard(){
     statusEl.className='ibox warn';
     statusEl.innerHTML=ICONS.ALERT+`<span>এখনো জানাননি — আজ ${fmtTimeHM(cutoff)}-এর আগে জানিয়ে দিন, নাহলে রান্নার হিসাবে আপনার মিল ধরা হবে না।</span>`;
   }
-  // Owner/Manager-এর নিয়ন্ত্রণ: কাট-অফ সময় + কোন কোন মিল-সময় active।
-  const cutoffAdmin=document.getElementById('mr-cutoff-admin');
-  if(cutoffAdmin){
-    cutoffAdmin.style.display=isAdmin?'flex':'none';
-    const ci=document.getElementById('mr-cutoff-time'); if(ci)ci.value=cutoff;
-  }
-  const am=document.getElementById('mr-activemeals-admin');
-  if(am){
-    am.style.display=isAdmin?'flex':'none';
-    ALL_MEAL_TYPES.forEach(t=>{ const cb=document.getElementById('am-'+t); if(cb)cb.checked=active.includes(t); });
-  }
 }
 async function saveMealRequest(){
   if(!currentMember)return;
@@ -1043,8 +1149,7 @@ async function saveMealRequest(){
   ALL_MEAL_TYPES.forEach(t=>{
     const on=act.includes(t);
     v[t]=on?document.getElementById('mr-'+t).checked:false;      // inactive টাইপ সবসময় false
-    g[t]=on?Math.max(0,Math.floor(N(document.getElementById('mr-g-'+t).value))):0;
-    if(!v[t]&&g[t]>0&&on){ /* মেম্বার নিজে না খেলেও গেস্টের মিল চাইতে পারে — অনুমোদিত */ }
+    g[t]=(on&&document.getElementById('mr-guest-cb').checked)?Math.max(0,Math.floor(N(document.getElementById('mr-g-'+t).value))):0;   // গেস্ট চেকবক্স টিক না থাকলে ০
   });
   setBusy('mr-save-btn',true);
   const ok=await dbOp(supa.from('meal_requests').upsert({mess_id:currentMessId,date:tmw,member_id:currentMember.id,member_name:currentMember.name,
@@ -2039,8 +2144,15 @@ async function resyncCarryForward(month,year){
    SETTINGS
    ═══════════════════════════════════════════════════════════ */
 function renderSettings(){
-  if(!requireSuperAdmin()){ goTo('dashboard'); return; }
+  // Settings এখন Owner আর এই মাসের Manager দুজনেই খুলতে পারে। মেসের নাম বদলানো
+  // শুধু Owner-এর (saveMessInfo-তে আলাদা চেক আছে) — Manager-এর কাছে সেই কার্ড
+  // লুকানো থাকে; মিল-সেটিং (কাট-অফ, active মিল) দুজনেই বদলাতে পারে।
+  if(!isAdmin){ toast('শুধু Owner বা এই মাসের Manager Settings দেখতে পারবেন','er'); goTo('dashboard'); return; }
+  const nameCard=document.getElementById('set-name-card'); if(nameCard)nameCard.style.display=isSuperAdmin?'':'none';
   document.getElementById('set-messname').value=STATE.settings.messName;
+  const ci=document.getElementById('mr-cutoff-time'); if(ci)ci.value=STATE.settings.mealCutoff||'00:00';
+  const act=activeMealTypes();
+  ALL_MEAL_TYPES.forEach(t=>{ const cb=document.getElementById('am-'+t); if(cb)cb.checked=act.includes(t); });
   const mgrs=[...STATE.managers].sort((a,b)=>b.monthYear.localeCompare(a.monthYear));
   document.getElementById('set-managers-list').innerHTML=mgrs.map(x=>`<div class="led-row"><span>${x.monthYear}</span><b>${escapeHtml(x.name)}</b></div>`).join('')||'<p class="hint">কোনো Manager assign করা হয়নি</p>';
 }

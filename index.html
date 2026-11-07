@@ -132,6 +132,7 @@
     <nav class="sb-nav">
       <div class="sb-sec">Overview</div>
       <button class="sb-item on" data-page="dashboard" onclick="goTo('dashboard')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5.5 10v10.2h13V10"/><path d="M9.5 20.2v-6h5v6"/></svg>Dashboard</button>
+      <button class="sb-item" data-page="notices" onclick="goTo('notices')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>Notices <span id="notice-badge" class="badge bl" style="display:none;margin-left:auto">0</span></button>
       <div class="sb-sec">Mess</div>
       <button class="sb-item" data-page="members" onclick="goTo('members')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20c0-3.5 3-6 6.5-6s6.5 2.5 6.5 6"/><circle cx="17.3" cy="9" r="2.6"/><path d="M15.4 14.3c2.7.4 4.6 2.6 4.6 5.9"/></svg>Members</button>
       <button class="sb-item" data-page="meals" onclick="goTo('meals')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v7.5M4 2v4.2a2 2 0 0 0 4 0V2M6 13.5V22"/><path d="M18 2c-2.2 1-3.4 3.2-3.4 6.3 0 2.6 1.4 3.2 3.4 3.2V22"/></svg>Daily Meal Entry</button>
@@ -187,35 +188,28 @@
               <label class="guest-toggle" id="mr-breakfast-label" style="justify-content:center;padding:12px;font-size:14px;width:100%;box-sizing:border-box">
                 <input type="checkbox" id="mr-breakfast" onchange="document.getElementById('mr-breakfast-label').classList.toggle('active',this.checked)" style="width:16px;height:16px">Breakfast
               </label>
-              <div class="fld" style="margin-top:6px"><label>Guest (Breakfast)</label><input type="number" min="0" step="1" id="mr-g-breakfast" placeholder="0"></div>
             </div>
             <div id="mr-lunch-wrap" style="flex:1;min-width:120px;display:none">
               <label class="guest-toggle" id="mr-lunch-label" style="justify-content:center;padding:12px;font-size:14px;width:100%;box-sizing:border-box">
                 <input type="checkbox" id="mr-lunch" onchange="document.getElementById('mr-lunch-label').classList.toggle('active',this.checked)" style="width:16px;height:16px">Lunch
               </label>
-              <div class="fld" style="margin-top:6px"><label>Guest (Lunch)</label><input type="number" min="0" step="1" id="mr-g-lunch" placeholder="0"></div>
             </div>
             <div id="mr-dinner-wrap" style="flex:1;min-width:120px;display:none">
               <label class="guest-toggle" id="mr-dinner-label" style="justify-content:center;padding:12px;font-size:14px;width:100%;box-sizing:border-box">
                 <input type="checkbox" id="mr-dinner" onchange="document.getElementById('mr-dinner-label').classList.toggle('active',this.checked)" style="width:16px;height:16px">Dinner
               </label>
-              <div class="fld" style="margin-top:6px"><label>Guest (Dinner)</label><input type="number" min="0" step="1" id="mr-g-dinner" placeholder="0"></div>
             </div>
+          </div>
+          <label class="guest-toggle" id="mr-guest-label" style="margin-top:10px;padding:10px 12px;font-size:14px;display:inline-flex">
+            <input type="checkbox" id="mr-guest-cb" onchange="toggleReqGuest()" style="width:16px;height:16px">Guest meal (অতিথির জন্য)
+          </label>
+          <div id="mr-guest-box" style="display:none;gap:10px;flex-wrap:wrap;margin-top:8px">
+            <div class="fld" id="mr-gwrap-breakfast" style="flex:1;min-width:120px"><label>Breakfast — guest কয়জন</label><input type="number" min="0" step="1" id="mr-g-breakfast" placeholder="0"></div>
+            <div class="fld" id="mr-gwrap-lunch" style="flex:1;min-width:120px"><label>Lunch — guest কয়জন</label><input type="number" min="0" step="1" id="mr-g-lunch" placeholder="0"></div>
+            <div class="fld" id="mr-gwrap-dinner" style="flex:1;min-width:120px"><label>Dinner — guest কয়জন</label><input type="number" min="0" step="1" id="mr-g-dinner" placeholder="0"></div>
           </div>
           <button class="btn primary block" id="mr-save-btn" onclick="saveMealRequest()" style="margin-top:12px">জানিয়ে দিন</button>
           <div class="ibox" id="mr-status" style="margin-top:12px"></div>
-          <div id="mr-cutoff-admin" style="display:none;margin-top:12px;align-items:center;gap:8px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border)">
-            <span class="hint" style="margin:0">Owner/Manager: মিল জানানোর শেষ সময় (কাট-অফ)</span>
-            <input type="time" id="mr-cutoff-time" style="width:130px">
-            <button class="btn sm" onclick="saveMealCutoff()">Save</button>
-          </div>
-          <div id="mr-activemeals-admin" style="display:none;margin-top:12px;align-items:center;gap:12px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border)">
-            <span class="hint" style="margin:0">Owner/Manager: কোন কোন মিল চালু থাকবে (মেম্বাররা শুধু এগুলোই দেখবে)</span>
-            <label style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="am-breakfast" style="width:16px;height:16px">Breakfast</label>
-            <label style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="am-lunch" style="width:16px;height:16px">Lunch</label>
-            <label style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="am-dinner" style="width:16px;height:16px">Dinner</label>
-            <button class="btn sm" onclick="saveActiveMeals()">Save</button>
-          </div>
         </div>
 
         <div class="grid cols-4" id="dash-stats" style="margin-bottom:16px"></div>
@@ -391,9 +385,32 @@
       </section>
 
       <!-- ══ SETTINGS ══ -->
+      <section class="page" data-page="notices">
+        <div class="card" id="notice-composer" style="margin-bottom:16px;display:none">
+          <div class="card-h" style="margin-bottom:8px"><h3>নতুন নোটিশ দিন</h3></div>
+          <p class="hint" style="margin-bottom:10px">মেম্বাররা পরের লগইনে ড্যাশবোর্ড খোলার সাথে সাথে এটা পপআপে দেখবে (একবারই আসবে)।</p>
+          <div class="fg"><label>শিরোনাম (ঐচ্ছিক)</label><input type="text" id="nt-title" maxlength="120" placeholder="যেমনঃ কাল বাজার বন্ধ"></div>
+          <div class="fg"><label>নোটিশ *</label><textarea id="nt-body" rows="4" maxlength="2000" placeholder="এখানে লিখুন..."></textarea></div>
+          <button class="btn primary" id="nt-post-btn" onclick="postNotice()">নোটিশ দিন</button>
+        </div>
+        <div id="notice-list"></div>
+      </section>
+
       <section class="page" data-page="settings">
         <div class="grid cols-2">
-          <div class="card">
+          <div class="card" id="set-meal-card">
+            <div class="card-h"><h3>মিল সেটিং</h3></div>
+            <p class="hint" style="margin-bottom:12px">Owner বা এই মাসের Manager এগুলো বদলাতে পারবেন। একবার Save করলে পরের পরিবর্তন পর্যন্ত এটাই চলবে।</p>
+            <div class="fg"><label>মিল জানানোর শেষ সময় (কাট-অফ)</label>
+              <div style="display:flex;gap:8px;align-items:center"><input type="time" id="mr-cutoff-time" style="width:140px"><button class="btn sm" onclick="saveMealCutoff()">Save</button></div></div>
+            <div class="fg"><label>কোন কোন মিল চালু থাকবে (মেম্বাররা শুধু এগুলোই দেখবে)</label>
+              <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+                <label style="display:flex;gap:5px;align-items:center"><input type="checkbox" id="am-breakfast" style="width:16px;height:16px">Breakfast</label>
+                <label style="display:flex;gap:5px;align-items:center"><input type="checkbox" id="am-lunch" style="width:16px;height:16px">Lunch</label>
+                <label style="display:flex;gap:5px;align-items:center"><input type="checkbox" id="am-dinner" style="width:16px;height:16px">Dinner</label>
+                <button class="btn sm" onclick="saveActiveMeals()">Save</button></div></div>
+          </div>
+          <div class="card" id="set-name-card">
             <div class="card-h"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5 4 4h16l1 5.5"/><path d="M3 9.5a2.6 2.6 0 0 0 5.2 0 2.6 2.6 0 0 0 5.2 0 2.6 2.6 0 0 0 5.2 0 2.6 2.6 0 0 0 4.4 1.9"/><path d="M5 10v10.2h14V10"/></svg>Mess Info</h3></div>
             <p class="hint" style="margin-bottom:12px">শুধু Owner (Super Admin) মেসের নাম বদলাতে পারবেন — এই মাসের Manager-ও পারবেন না।</p>
             <div class="fg"><label>Mess Name</label><input type="text" id="set-messname"></div>
@@ -412,6 +429,14 @@
 </div>
 
 <!-- ══ MODALS ══ -->
+<div class="overlay" id="ov-notice-popup">
+  <div class="modal">
+    <div class="m-head"><h3>📢 নোটিশ <span id="np-count" class="hint" style="font-weight:400"></span></h3></div>
+    <div class="m-body" id="np-body" style="max-height:60vh;overflow-y:auto"></div>
+    <div class="m-foot"><button class="btn primary" id="np-ok-btn" onclick="ackNotices()">ঠিক আছে</button></div>
+  </div>
+</div>
+
 <div class="overlay" id="ov-member">
   <div class="modal">
     <div class="m-head"><h3 id="mem-modal-title">Add Member</h3><button class="btn icon ghost" onclick="closeM('ov-member')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>

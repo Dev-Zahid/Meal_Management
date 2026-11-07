@@ -297,3 +297,29 @@ alter table meal_requests add column if not exists breakfast boolean default fal
 alter table meal_requests add column if not exists g_breakfast int default 0;
 alter table meal_requests add column if not exists g_lunch int default 0;
 alter table meal_requests add column if not exists g_dinner int default 0;
+
+-- নোটিশ: Owner/Manager নোটিশ দেয়, মেম্বাররা লগইনে পপআপে দেখে। notice_reads-এ
+-- কোন মেম্বার কোন নোটিশ "OK" করেছে সেটা থাকে, যাতে পপআপ একবারই আসে।
+create table if not exists notices (
+  id text primary key,
+  mess_id text not null,
+  title text not null default '',
+  body text not null,
+  author_id text,
+  author_name text,
+  created_at timestamptz not null default now()
+);
+create index if not exists notices_mess_idx on notices(mess_id, created_at desc);
+create table if not exists notice_reads (
+  mess_id text not null,
+  notice_id text not null,
+  member_id text not null,
+  read_at timestamptz not null default now(),
+  primary key (notice_id, member_id)
+);
+alter table notices enable row level security;
+alter table notice_reads enable row level security;
+drop policy if exists "public read/write" on notices;
+create policy "public read/write" on notices for all using (true) with check (true);
+drop policy if exists "public read/write" on notice_reads;
+create policy "public read/write" on notice_reads for all using (true) with check (true);

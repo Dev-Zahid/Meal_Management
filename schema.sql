@@ -129,6 +129,26 @@ create table if not exists meal_requests (
   primary key (mess_id, date, member_id)
 );
 
+-- নোটিশ: Owner/Manager নোটিশ দেয়, মেম্বাররা লগইনে পপআপে দেখে। notice_reads-এ
+-- কোন মেম্বার কোন নোটিশ "OK" করেছে সেটা থাকে, যাতে পপআপ একবারই আসে।
+create table if not exists notices (
+  id text primary key,
+  mess_id text not null,
+  title text not null default '',
+  body text not null,
+  author_id text,
+  author_name text,
+  created_at timestamptz not null default now()
+);
+create index if not exists notices_mess_idx on notices(mess_id, created_at desc);
+create table if not exists notice_reads (
+  mess_id text not null,
+  notice_id text not null,
+  member_id text not null,
+  read_at timestamptz not null default now(),
+  primary key (notice_id, member_id)
+);
+
 -- NOTE: member_id columns above are plain text, NOT foreign keys.
 -- This matches the app's existing behavior — deleting a member keeps
 -- their old meal/deposit history intact (same as before).
@@ -153,6 +173,8 @@ alter table deposits enable row level security;
 alter table managers enable row level security;
 alter table day_notes enable row level security;
 alter table meal_requests enable row level security;
+alter table notices enable row level security;
+alter table notice_reads enable row level security;
 
 create policy "public read/write" on messes for all using (true) with check (true);
 create policy "public read/write" on platform_admins for all using (true) with check (true);
@@ -164,6 +186,10 @@ create policy "public read/write" on deposits for all using (true) with check (t
 create policy "public read/write" on managers for all using (true) with check (true);
 create policy "public read/write" on day_notes for all using (true) with check (true);
 create policy "public read/write" on meal_requests for all using (true) with check (true);
+drop policy if exists "public read/write" on notices;
+create policy "public read/write" on notices for all using (true) with check (true);
+drop policy if exists "public read/write" on notice_reads;
+create policy "public read/write" on notice_reads for all using (true) with check (true);
 
 -- ═══════════════════════════════════════════════════════════════
 -- PASSWORD SECURITY HARDENING — এতদিন password_hash কলামটাও members/
